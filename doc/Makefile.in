@@ -22,23 +22,25 @@ MKDIR_P  = @MKDIR_P@
 
 source   = 
 header   = 
-document = QUICKSTART QUICKSTART.jp istgt.1.in
+document = QUICKSTART QUICKSTART.jp
 sample   = 
+MANPAGES = $(patsubst %.1.in, %.1, $(wildcard *.1.in))
 
 DISTDIR = $(top_srcdir)/`cat $(top_srcdir)/distdir`
 DISTFILES = Makefile.in \
 	$(header) $(source) \
 	$(document) $(sample)
+DISTFILES += $(MANPAGES)
 
 #########################################################################
 
 .PHONY: all install install-doc install-dirs install-doc-dirs
-all: istgt.1
+all: $(MANPAGES)
 
-istgt.1:
+$(MANPAGES):
 	$(SED) -e 's:%%PREFIX%%:$(prefix):g' \
 		-e 's:%%CONFIGDIR%%:$(configdir):g' \
-		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.1.in > $@
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < $(patsubst %.1, %.1.in, $@) > $@
 
 dist: $(DISTFILES)
 	$(MKDIR_P) $(DISTDIR)/$(subdir)
@@ -48,9 +50,13 @@ dist: $(DISTFILES)
 	done
 
 install: install-dirs
-	$(INSTALL) -m 0644 istgt.1 $(DESTDIR)$(mandir)/man1/
-	-rm -f $(DESTDIR)$(mandir)/man1/istgt.1.gz
-	gzip -9 $(DESTDIR)$(mandir)/man1/istgt.1
+	set -e
+	for file in $(MANPAGES) ; \
+	do \
+		$(INSTALL) -c -m 0644 $$file $(DESTDIR)$(mandir)/man1/ ; \
+		rm -f $(DESTDIR)$(mandir)/man1/$$file.gz ; \
+		gzip -9 $(DESTDIR)$(mandir)/man1/$$file ; \
+	done
 
 install-doc: install-doc-dirs
 	$(INSTALL) -m 0644 $(top_srcdir)/README $(DESTDIR)$(datadir)/doc/istgt/
@@ -66,7 +72,7 @@ install-doc-dirs:
 
 .PHONY: clean distclean depend
 clean:
-	-rm -f istgt.1
+	-rm -f $(MANPAGES)
 	-rm -f a.out *.o *.core
 	-rm -f *~
 
