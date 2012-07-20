@@ -1,0 +1,73 @@
+# for doc
+
+top_srcdir = @top_srcdir@
+srcdir   = @srcdir@
+
+prefix   = @prefix@
+exec_prefix = @exec_prefix@
+bindir   = @bindir@
+sbindir  = @sbindir@
+sysconfdir = @sysconfdir@
+datadir  = @datarootdir@
+libexecdir = @libexecdir@
+mandir   = $(prefix)/man
+
+configdir = @configdir@
+mediadir = @mediadir@
+
+SED      = @SED@
+
+source   = 
+header   = 
+document = QUICKSTART QUICKSTART.jp istgt.1.in
+sample   = 
+
+DISTDIR = $(top_srcdir)/`cat $(top_srcdir)/distdir`
+DISTFILES = Makefile.in \
+	$(header) $(source) \
+	$(document) $(sample)
+
+#########################################################################
+
+all: istgt.1
+
+istgt.1:
+	$(SED) -e 's:%%PREFIX%%:$(prefix):g' \
+		-e 's:%%CONFIGDIR%%:$(configdir):g' \
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.1.in > $@
+
+dist: $(DISTFILES)
+	mkdir $(DISTDIR)/$(subdir)
+	cd $(srcdir); thisdir=`pwd`; \
+	for file in $(DISTFILES); do \
+	  cp -p $$thisdir/$$file $(DISTDIR)/$(subdir); \
+	done
+
+install: install-dirs
+	install -c -m 0644 istgt.1 $(DESTDIR)$(mandir)/man1/
+	-rm -f $(DESTDIR)$(mandir)/man1/istgt.1.gz
+	gzip -9 $(DESTDIR)$(mandir)/man1/istgt.1
+
+install-doc: install-doc-dirs
+	install -c -m 0644 $(top_srcdir)/README $(DESTDIR)$(datadir)/doc/istgt/
+	install -c -m 0644 $(top_srcdir)/ChangeLog.jp $(DESTDIR)$(datadir)/doc/istgt/
+	install -c -m 0644 QUICKSTART $(DESTDIR)$(datadir)/doc/istgt/
+	install -c -m 0644 QUICKSTART.jp $(DESTDIR)$(datadir)/doc/istgt/
+
+install-dirs:
+	mkdir -p $(DESTDIR)$(mandir)/man1
+
+install-doc-dirs:
+	mkdir -p $(DESTDIR)$(datadir)/doc/istgt
+
+clean:
+	-rm -f istgt.1
+	-rm -f a.out *.o *.core
+	-rm -f *~
+
+distclean: clean
+	-rm -f Makefile config.status config.cache config.log config.h
+
+depend:
+
+#########################################################################

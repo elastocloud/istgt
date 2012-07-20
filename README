@@ -1,0 +1,135 @@
+The iSCSI target for FreeBSD 7.1 or later
+
+This software (istgt) is the implementation of iSCSI target
+(refer to RFC3720 about iSCSI) for FreeBSD 7.1 or later.
+It includes iSCSI protocol processor and SPC-3 (SCSI Primary
+Commands - 3) based logical unit emulation.
+You can easily create over 2TB storage for iSCSI target.
+If necessary, you can configure to use multipath failover or
+MCS failover.
+
+If you want use the command queuing, change QueueDepth key of
+the configuration. Because default is comment out, you only
+remove # from this line to make the parameter take effect.
+The command queuing is not yet stable. If you have any problem,
+comment out or specify 0 to disable it. The small QueueDepth
+may cause a problem. I recommend you to specify more than 32.
+
+You can use a file or any raw device as the backing store.
+Microsoft Windows Server 2008 or Microsoft iSCSI initiator 2.08
+or later is recommended.
+Diskless iSCSI boot is tested with Intel PRO/1000 PT Server
+Adapter and Windows Server 2003/2008/2008R2/Windows7 RC.
+iSCSI install/boot is tested with gPXE 1.0.0 and WS2K8/2K8R2/W7.
+Intel Gigabit CT Desktop Adapter is tested with WS 2K8R2/W7.
+
+This software is under development and less document.
+The format of the configuration file may frequently be changed.
+Please use it carefully.
+It is made based on the concept of my own MCS extra patch
+(release 20090125) for iscsi-target (netbsd-iscsi-20080207).
+
+If you want to run FreeBSD in Hyper-V environment,
+please use my small kernel patch of reboot issue which can be
+downloaded below.
+
+The latest version is available at:
+http://shell.peach.ne.jp/aoyama/
+
+For FreeBSD initiator, please check here:
+ftp://ftp.cs.huji.ac.il/users/danny/freebsd/
+
+Using path-through tape drive from Microsoft iSCSI Initiator:
+open registry of initiator by regedit.exe.
+change the value of MaxTransferLength to 0x10000 (65536).
+reboot Windows.
+(0000 is an instance number. It might be a different value.)
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Class\
+{4D36E97B-E325-11CE-BFC1-08002BE10318}\0000\Parameters\
+MaxTransferLength
+
+Timeout of Microsoft iSCSI Initiator:
+If you want fast recovery from failure, try to decrease the value in
+above registry:
+LinkDownTime
+TCPConnectTime
+TCPDisconnectTime
+DelayBetweenReconnect
+
+If you want to keep failed command, try to increase:
+MaxRequestHoldTime
+SrbTimeoutDelta
+
+
+External Libs:
+ o OpenSSL (shipped with FreeBSD)
+ o CAM (shipped with FreeBSD)
+
+Tested Initiators:
+ o Microsoft Windows Server 2008 (builtin)
+ o Microsoft Windows Server 2008 R2 (builtin)
+ o Microsoft Windows 7 Ultimate x64 (builtin)
+ o Microsoft iSCSI Initiator 2.08 on WS2003
+ o Intel iSCSI Remote Boot 2.1.22
+ o Intel iSCSI Remote Boot 2.3.81
+ o Intel iSCSI Remote Boot 2.5.12 (CT Desktop Adapter)
+ o Intel iSCSI Remote Boot 2.7.44 (ET Dual Port Server Adapter)
+ o Sun VirtualBOX 2.1.2 (builtin)
+ o Sun VirtualBOX 3.0.12 (builtin)
+ o Sun VirtualBOX 3.1.2 (builtin)
+ o VMware ESXi 3.5 Update 3 (builtin)
+ o VMware ESXi 4.0 (builtin)
+ o VMware ESXi 4.1 Update 1 (builtin)
+ o VMware ESXi 5.0 (builtin)
+ o Xen Server 5.0 Update 3 (builtin)
+ o Xen Server 5.5 (builtin)
+ o FreeBSD 7.1 + iscsi 2.1.3
+ o FreeBSD 7.2 + iscsi 2.2.3
+ o FreeBSD 7.3 + iscsi 2.2.4
+ o FreeBSD 8.2 + isboot 0.2.3
+ o CentOS 5.2 + Open-iSCSI (package)
+ o Ubuntu 9.10 + Open-iSCSI (package)
+ o gPXE 1.0.0 + VirtualBox 3.1.2 on FreeNAS 0.7.1
+ o FreeNAS 0.7.1 (FreeBSD 7.2/7.3 + iscsi 2.2.4)
+ o FreeNAS 0.7.2 (FreeBSD 7.3 + iscsi 2.2.4)
+
+Features:
+ o MCS/MPIO for failover (up to 255 concurrent sessions)
+ o Multipath I/O (only support Microsoft MPIO/VMware ESXi)
+ o SPC-3 Persistent Reservation for cluster nodes
+ o 64bit LBA for over 2TB
+ o Header/Data digest by CRC32C
+ o CHAP w/Mutual authentication
+ o Multiple LUNs and ACLs for portals
+ o IPv6/IPv4 dual support
+ (experimental features)
+ o Command Queuing (up to 255 depths, disabled by default)
+ o iSCSI boot with Intel PRO/1000 Server Adapters
+ o virtual DVD-ROM and virtual tape drive (DLT emulator)
+ o pass-through device (only support DA/SA/CD/CH type)
+
+Current Limitations:
+ o logical unit is sharing with exclusive lock
+ o exclusive port w/asynchronous operation
+ o command queuing is incomplete for multiple initiators
+ o LUN1 and more are shared information of LUN0 (e.g. UnitInquiry)
+ o APTPL (Activate Persist Through Power Loss) is not supported
+ o TPGS is incomplete for multipath failover (disabled by default)
+ o path-through SA variable length must not exceed 65536 (CAM limit)
+ o maximum LUN is 15
+ o maximum PortalGroup are 1024
+ o maximum InitiatorGroup, LogicalUnit are 4096
+ o maximum mapping per target is 256
+ o maximum concurrent session identifier per target is 255
+ o maximum persistent reservation keys per target is 256
+ (most case of limitation is due to memory allocation and finding
+  method by linear search)
+
+Special Thanks to:
+Isao Takatani (bug report and idea suggestion)
+Toshiya Shimpo of Meikohsha Information System Co.,Ltd
+Yoshio Takii of Meikohsha Information System Co.,Ltd
+
+Author:
+Daisuke Aoyama <aoyama@peach.ne.jp>

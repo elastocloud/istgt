@@ -1,0 +1,81 @@
+# for etc
+
+top_srcdir = @top_srcdir@
+srcdir   = @srcdir@
+
+prefix   = @prefix@
+exec_prefix = @exec_prefix@
+bindir   = @bindir@
+sbindir  = @sbindir@
+sysconfdir = @sysconfdir@
+datadir  = @datarootdir@
+libexecdir = @libexecdir@
+
+configdir = @configdir@
+mediadir = @mediadir@
+
+SED      = @SED@
+
+source   = 
+header   = 
+document = 
+sample   = auth.conf istgtcontrol.conf \
+	istgt.large.conf.in istgt.conf.in istgt.sh.in
+
+DISTDIR = $(top_srcdir)/`cat $(top_srcdir)/distdir`
+DISTFILES = Makefile.in \
+	$(header) $(source) \
+	$(document) $(sample)
+
+#########################################################################
+
+all: istgt.large.conf istgt.conf istgt.sh
+
+istgt.large.conf:
+	$(SED) -e 's:%%SYSCONFDIR%%:$(sysconfdir):g' \
+		-e 's:%%CONFIGDIR%%:$(configdir):g' \
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.large.conf.in > $@
+istgt.conf:
+	$(SED) -e 's:%%SYSCONFDIR%%:$(sysconfdir):g' \
+		-e 's:%%CONFIGDIR%%:$(configdir):g' \
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.conf.in > $@
+istgt.sh:
+	$(SED) -e 's:%%SYSCONFDIR%%:$(sysconfdir):g' \
+		-e 's:%%CONFIGDIR%%:$(configdir):g' \
+		-e 's:%%MEDIADIR%%:$(mediadir):g' \
+		-e 's:%%BINDIR%%:$(bindir):g' < istgt.sh.in > $@
+
+dist: $(DISTFILES)
+	mkdir $(DISTDIR)/$(subdir)
+	cd $(srcdir); thisdir=`pwd`; \
+	for file in $(DISTFILES); do \
+	  cp -p $$thisdir/$$file $(DISTDIR)/$(subdir); \
+	done
+
+install: install-dirs
+	install -c -m 0644 istgt.conf $(DESTDIR)$(sysconfdir)/istgt/istgt.conf.sample
+	install -c -m 0644 istgt.large.conf \
+	$(DESTDIR)$(sysconfdir)/istgt/istgt.large.conf.sample
+	install -c -m 0600 auth.conf $(DESTDIR)$(sysconfdir)/istgt/auth.conf.sample
+	install -c -m 0600 istgtcontrol.conf \
+	$(DESTDIR)$(sysconfdir)/istgt/istgtcontrol.conf.sample
+#	if [ ! -f $(sysconfdir)/rc.d/istgt ]; then \
+#	  install -c -m 0555 istgt.sh $(DESTDIR)$(sysconfdir)/rc.d/istgt; \
+#	fi
+	install -c -m 0555 istgt.sh $(DESTDIR)$(sysconfdir)/rc.d/istgt
+
+install-dirs:
+	mkdir -p $(DESTDIR)$(sysconfdir)/istgt
+	mkdir -p $(DESTDIR)$(sysconfdir)/rc.d
+
+clean:
+	-rm -f istgt.large.conf istgt.conf istgt.sh
+	-rm -f a.out *.o *.core
+	-rm -f *~
+
+distclean: clean
+	-rm -f Makefile config.status config.cache config.log config.h
+
+depend:
+
+#########################################################################
