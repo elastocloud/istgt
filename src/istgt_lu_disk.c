@@ -4058,12 +4058,6 @@ istgt_lu_disk_lbread(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused_
 	uint64_t nbytes;
 	int64_t rc;
 
-	if (len == 0) {
-		lu_cmd->data = NULL;
-		lu_cmd->data_len = 0;
-		return 0;
-	}
-
 	maxlba = spec->blockcnt;
 	llen = (uint64_t) len;
 	blen = spec->blocklen;
@@ -4077,6 +4071,12 @@ istgt_lu_disk_lbread(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused_
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
 		ISTGT_ERRLOG("end of media\n");
 		return -1;
+	}
+
+	if (len == 0) {
+		lu_cmd->data = NULL;
+		lu_cmd->data_len = 0;
+		return 0;
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
@@ -4117,11 +4117,6 @@ istgt_lu_disk_lbwrite(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cm
 	uint64_t nbytes;
 	int64_t rc;
 
-	if (len == 0) {
-		lu_cmd->data_len = 0;
-		return 0;
-	}
-
 	maxlba = spec->blockcnt;
 	llen = (uint64_t) len;
 	blen = spec->blocklen;
@@ -4135,6 +4130,11 @@ istgt_lu_disk_lbwrite(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cm
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
 		ISTGT_ERRLOG("end of media\n");
 		return -1;
+	}
+
+	if (len == 0) {
+		lu_cmd->data_len = 0;
+		return 0;
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
