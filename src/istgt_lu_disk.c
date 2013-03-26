@@ -4069,7 +4069,13 @@ istgt_lu_disk_lbread(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused_
 	    maxlba, lba, len);
 
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
+		uint8_t *sense_data;
+		size_t *sense_len;
 		ISTGT_ERRLOG("end of media\n");
+		sense_data = lu_cmd->sense_data;
+		sense_len = &lu_cmd->sense_data_len;
+		*sense_len = 0;
+		BUILD_SENSE(ILLEGAL_REQUEST, 0x21, 0x00);
 		return -1;
 	}
 
@@ -4128,7 +4134,13 @@ istgt_lu_disk_lbwrite(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cm
 	    maxlba, lba, len);
 
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
+		uint8_t *sense_data;
+		size_t *sense_len;
 		ISTGT_ERRLOG("end of media\n");
+		sense_data = lu_cmd->sense_data;
+		sense_len = &lu_cmd->sense_data_len;
+		*sense_len = 0;
+		BUILD_SENSE(ILLEGAL_REQUEST, 0x21, 0x00);
 		return -1;
 	}
 
@@ -4188,12 +4200,18 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 	uint64_t nblocks;
 	uint64_t wblocks;
 	int64_t rc;
+	uint8_t *sense_data;
+	size_t *sense_len;
 
+	sense_data = lu_cmd->sense_data;
+	sense_len = &lu_cmd->sense_data_len;
+	*sense_len = 0;
 	maxlba = spec->blockcnt;
 	llen = (uint64_t) len;
 	if (llen == 0) {
 		if (lba >= maxlba) {
 			ISTGT_ERRLOG("end of media\n");
+			BUILD_SENSE(ILLEGAL_REQUEST, 0x21, 0x00);
 			return -1;
 		}
 		llen = maxlba - lba;
@@ -4208,6 +4226,7 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
 		ISTGT_ERRLOG("end of media\n");
+		BUILD_SENSE(ILLEGAL_REQUEST, 0x21, 0x00);
 		return -1;
 	}
 
