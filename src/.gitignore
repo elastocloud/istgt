@@ -1,0 +1,6 @@
+*.o
+build.h
+config.h
+istgt
+istgtcontrol
+stamp-depend

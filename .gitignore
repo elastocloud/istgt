@@ -1,0 +1,7 @@
+Makefile
+autom4te.cache/
+config.guess
+config.log
+config.status
+config.sub
+cscope.out
