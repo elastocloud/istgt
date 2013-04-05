@@ -30,17 +30,12 @@
 
 #include <stddef.h>
 
-#ifdef HAVE_LIBMD
-#include <sys/types.h>
-#include <md5.h>
-#else
-#include <openssl/md5.h>
-#endif
+#include "md5.h"
 
-#define ISTGT_MD5DIGEST_LEN MD5_DIGEST_LENGTH
+#define ISTGT_MD5DIGEST_LEN 16
 
 typedef struct istgt_md5ctx_t {
-	MD5_CTX md5ctx;
+	struct md5 state;
 } ISTGT_MD5CTX;
 
 int istgt_md5init(ISTGT_MD5CTX *md5ctx);

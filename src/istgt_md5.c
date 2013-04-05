@@ -33,62 +33,36 @@
 #include <stdint.h>
 
 #include <stddef.h>
-#ifdef HAVE_LIBMD
-#include <sys/types.h>
-#include <md5.h>
-#else
-#include <openssl/md5.h>
-#endif
 
 #include "istgt.h"
+#include "md5.h"
 #include "istgt_md5.h"
 
 int
 istgt_md5init(ISTGT_MD5CTX *md5ctx)
 {
-	int rc;
-
 	if (md5ctx == NULL)
 		return -1;
-#ifdef HAVE_LIBMD
-	MD5Init(&md5ctx->md5ctx);
-	rc = 1;
-#else
-	rc = MD5_Init(&md5ctx->md5ctx);
-#endif
-	return rc;
+	MD5_Init(&md5ctx->state);
+	return 0;
 }
 
 int
 istgt_md5final(void *md5, ISTGT_MD5CTX *md5ctx)
 {
-	int rc;
-
 	if (md5ctx == NULL || md5 == NULL)
 		return -1;
-#ifdef HAVE_LIBMD
-	MD5Final(md5, &md5ctx->md5ctx);
-	rc = 1;
-#else
-	rc = MD5_Final(md5, &md5ctx->md5ctx);
-#endif
-	return rc;
+	MD5_Final(md5, &md5ctx->state);
+	return 0;
 }
 
 int
 istgt_md5update(ISTGT_MD5CTX *md5ctx, const void *data, size_t len)
 {
-	int rc;
-
 	if (md5ctx == NULL)
 		return -1;
 	if (data == NULL || len <= 0)
 		return 0;
-#ifdef HAVE_LIBMD
-	MD5Update(&md5ctx->md5ctx, data, len);
-	rc = 1;
-#else
-	rc = MD5_Update(&md5ctx->md5ctx, data, len);
-#endif
-	return rc;
+	MD5_Update(&md5ctx->state, data, len);
+	return 0;
 }

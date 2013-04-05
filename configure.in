@@ -60,8 +60,6 @@ esac
 
 # Checks for libraries.
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([md], [MD5Update], ,
-  [AC_CHECK_LIB([crypto], [MD5_Update])])
 AC_CHECK_LIB([cam], [cam_open_spec_device])
 
 # Checks for header files.
