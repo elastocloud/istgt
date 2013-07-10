@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -69,6 +69,7 @@ typedef struct config_t
 
 CONFIG *istgt_allocate_config(void);
 void istgt_free_config(CONFIG *cp);
+void istgt_copy_cf_item(CF_SECTION *sp_dst, CF_SECTION *sp_src);
 CF_SECTION *istgt_find_cf_section(CONFIG *cp, const char *name);
 CF_ITEM *istgt_find_cf_nitem(CF_SECTION *sp, const char *key, int idx);
 CF_ITEM *istgt_find_cf_item(CF_SECTION *sp, const char *key);

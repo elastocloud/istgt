@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,6 +36,7 @@ int istgt_listen(const char *ip, int port);
 int istgt_connect(const char *host, int port);
 int istgt_set_recvtimeout(int s, int msec);
 int istgt_set_sendtimeout(int s, int msec);
+int istgt_set_recvlowat(int s, int nbytes);
 ssize_t istgt_read_socket(int s, void *buf, size_t nbytes, int timeout);
 ssize_t istgt_write_socket(int s, const void *buf, size_t nbytes, int timeout);
 ssize_t istgt_readline_socket(int sock, char *buf, size_t size, char *tmp, size_t tmpsize, int *tmpidx, int *tmpcnt, int timeout);

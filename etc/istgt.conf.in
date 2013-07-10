@@ -3,6 +3,9 @@
 # Please do not write parameters excluding ASCII.
 # The parameter must be quoted if space or separator include.
 #
+# The section of PortalGroup, InitiatorGroup and LogicalUnit can be
+# reloaded by sending SIGHUP to the istgt process.
+#
 # configuration syntax:
 # spaces at head of line are deleted, other spaces are as separator
 # starting with '#' is comment line, not evaluate
@@ -160,6 +163,8 @@
 
   # for future use (enabled by default)
   #LUN0 Option ReadCache Disable
+
+  # control WCE(mode page 8) and O_FSYNC/O_SYNC on the backing store (enabled by default)
   #LUN0 Option WriteCache Disable
 
 #[LogicalUnit2]

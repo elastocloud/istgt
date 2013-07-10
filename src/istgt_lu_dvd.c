@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -57,6 +57,11 @@
 #include "istgt_proto.h"
 #include "istgt_scsi.h"
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
 //#define ISTGT_TRACE_DVD
 
 #define DEFAULT_DVD_BLOCKLEN 2048
@@ -103,12 +108,12 @@ typedef struct istgt_lu_dvd_t {
 	volatile int sense;
 } ISTGT_LU_DVD;
 
-#define BUILD_SENSE(SK,ASC,ASCQ)										\
-	do {																\
-		*sense_len =													\
-			istgt_lu_dvd_build_sense_data(spec, sense_data,				\
-										   ISTGT_SCSI_SENSE_ ## SK,		\
-										   (ASC), (ASCQ));				\
+#define BUILD_SENSE(SK,ASC,ASCQ)					\
+	do {								\
+		*sense_len =						\
+			istgt_lu_dvd_build_sense_data(spec, sense_data,	\
+			    ISTGT_SCSI_SENSE_ ## SK,			\
+			    (ASC), (ASCQ));				\
 	} while (0)
 
 static int istgt_lu_dvd_build_sense_data(ISTGT_LU_DVD *spec, uint8_t *data, int sk, int asc, int ascq);
@@ -178,7 +183,7 @@ istgt_lu_dvd_write(ISTGT_LU_DVD *spec, const void *buf, uint64_t nbytes)
 }
 
 static int64_t
-istgt_lu_dvd_sync(ISTGT_LU_DVD *spec, uint64_t offset, uint64_t nbytes)
+istgt_lu_dvd_sync(ISTGT_LU_DVD *spec, uint64_t offset __attribute__((__unused__)), uint64_t nbytes __attribute__((__unused__)))
 {
 	int64_t rc;
 
@@ -287,7 +292,8 @@ istgt_lu_dvd_load_media(ISTGT_LU_DVD *spec)
 		}
 		rc = istgt_lu_dvd_open(spec, flags, 0666);
 		if (rc < 0) {
-			ISTGT_ERRLOG("LU%d: LUN%d: open error\n", lu->num, spec->lun);
+			ISTGT_ERRLOG("LU%d: LUN%d: open error(errno=%d)\n",
+			    lu->num, spec->lun, errno);
 			return -1;
 		}
 		if (lu->lun[spec->lun].u.removable.size < ISTGT_LU_MEDIA_SIZE_MIN) {
@@ -449,7 +455,7 @@ istgt_lu_dvd_allocate(ISTGT_LU_DVD *spec)
 		return -1;
 	}
 	rc = istgt_lu_dvd_write(spec, data, nbytes);
-	if (rc == -1 || rc != nbytes) {
+	if (rc == -1 || (uint64_t) rc != nbytes) {
 		ISTGT_ERRLOG("lu_dvd_write() failed\n");
 		xfree(data);
 		return -1;
@@ -460,7 +466,7 @@ istgt_lu_dvd_allocate(ISTGT_LU_DVD *spec)
 }
 
 int
-istgt_lu_dvd_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_dvd_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_DVD *spec;
 	uint64_t gb_size;
@@ -481,7 +487,7 @@ istgt_lu_dvd_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 	for (i = 0; i < lu->maxlun; i++) {
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 			lu->lun[i].spec = NULL;
 			continue;
 		}
@@ -490,7 +496,7 @@ istgt_lu_dvd_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			return -1;
 		}
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d removable\n",
-					   lu->num, i);
+		    lu->num, i);
 
 		spec = xmalloc(sizeof *spec);
 		memset(spec, 0, sizeof *spec);
@@ -527,28 +533,28 @@ istgt_lu_dvd_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			spec->mwait = 0;
 
 			if (spec->lu->readonly
-				|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+			    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 				ro = 1;
 			} else {
 				ro = 0;
 			}
 
 			printf("LU%d: LUN%d file=%s, size=%"PRIu64", flag=%s\n",
-				   lu->num, i, spec->file, spec->size, ro ? "ro" : "rw");
+			    lu->num, i, spec->file, spec->size, ro ? "ro" : "rw");
 			printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
-				   lu->num, i, spec->blockcnt, spec->blocklen);
+			    lu->num, i, spec->blockcnt, spec->blocklen);
 
 			gb_size = spec->size / ISTGT_LU_1GB;
 			mb_size = (spec->size % ISTGT_LU_1GB) / ISTGT_LU_1MB;
 			if (gb_size > 0) {
 				mb_digit = (int) (((mb_size * 100) / 1024) / 10);
 				printf("LU%d: LUN%d %"PRIu64".%dGB %sstorage for %s\n",
-					   lu->num, i, gb_size, mb_digit,
-					   lu->readonly ? "readonly " : "", lu->name);
+				    lu->num, i, gb_size, mb_digit,
+				    lu->readonly ? "readonly " : "", lu->name);
 			} else {
 				printf("LU%d: LUN%d %"PRIu64"MB %sstorage for %s\n",
-					   lu->num, i, mb_size,
-					   lu->readonly ? "readonly " : "", lu->name);
+				    lu->num, i, mb_size,
+				    lu->readonly ? "readonly " : "", lu->name);
 			}
 		} else {
 			/* initial state */
@@ -557,7 +563,7 @@ istgt_lu_dvd_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			spec->mwait = 0;
 
 			printf("LU%d: LUN%d empty slot\n",
-				   lu->num, i);
+			    lu->num, i);
 		}
 
 		lu->lun[i].spec = spec;
@@ -567,7 +573,7 @@ istgt_lu_dvd_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 }
 
 int
-istgt_lu_dvd_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_dvd_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_DVD *spec;
 	int rc;
@@ -580,7 +586,7 @@ istgt_lu_dvd_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 	for (i = 0; i < lu->maxlun; i++) {
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 			continue;
 		}
 		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_REMOVABLE) {
@@ -610,7 +616,7 @@ istgt_lu_dvd_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 }
 
 static int
-istgt_lu_dvd_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int sel, uint8_t *data, int alloc_len)
+istgt_lu_dvd_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int sel, uint8_t *data, int alloc_len)
 {
 	uint64_t fmt_lun, lun, method;
 	int hlen = 0, len = 0;
@@ -640,7 +646,7 @@ istgt_lu_dvd_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int 
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 #if 0
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 #endif
 			continue;
 		}
@@ -653,7 +659,7 @@ istgt_lu_dvd_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int 
 			method = 0x00U;
 			fmt_lun = (method & 0x03U) << 62;
 			fmt_lun |= (lun & 0x00ffU) << 48;
-		} else if (lu->maxlun <= 0x4000U) {
+		} else if (lu->maxlun <= 0x4000) {
 			/* below 16384 */
 			method = 0x01U;
 			fmt_lun = (method & 0x03U) << 62;
@@ -809,7 +815,7 @@ istgt_lu_dvd_scsi_inquiry(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8
 			istgt_strcpy_pad(&cp[12], 16, spec->lu->inq_product, ' ');
 			/* PRODUCT SERIAL NUMBER */
 			istgt_strcpy_pad(&cp[28], MAX_LU_SERIAL_STRING,
-							 spec->lu->inq_serial, ' ');
+			    spec->lu->inq_serial, ' ');
 			plen += 16 + MAX_LU_SERIAL_STRING;
 
 			cp[3] = plen;
@@ -833,8 +839,7 @@ istgt_lu_dvd_scsi_inquiry(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8
 
 			/* IDENTIFIER */
 			plen = snprintf((char *) &cp[4], MAX_TARGET_NAME,
-							"%s",
-							spec->lu->name);
+			    "%s", spec->lu->name);
 			cp[3] = plen;
 			len += 4 + plen;
 
@@ -856,9 +861,7 @@ istgt_lu_dvd_scsi_inquiry(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8
 
 			/* IDENTIFIER */
 			plen = snprintf((char *) &cp[4], MAX_TARGET_NAME,
-							"%s"",t,0x""%4.4x",
-							spec->lu->name,
-							conn->portal.tag);
+			    "%s"",t,0x""%4.4x", spec->lu->name, conn->portal.tag);
 			cp[3] = plen;
 			len += 4 + plen;
 
@@ -929,7 +932,7 @@ istgt_lu_dvd_scsi_inquiry(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8
 			BDSET8W(&cp[1], 1, 7, 1); /* PIV */
 			BDADD8W(&cp[1], SPC_VPD_ASSOCIATION_TARGET_PORT, 5, 2);
 			BDADD8W(&cp[1], SPC_VPD_IDENTIFIER_TYPE_LOGICAL_UNIT_GROUP,
-					3, 4);
+			    3, 4);
 			/* Reserved */
 			cp[2] = 0;
 			/* IDENTIFIER LENGTH */
@@ -1104,9 +1107,7 @@ istgt_lu_dvd_scsi_inquiry(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8
 
 				/* IDENTIFIER */
 				plen = snprintf((char *) &cp2[4], MAX_TARGET_NAME,
-								"%s"",t,0x""%4.4x",
-								spec->lu->name,
-								pg_tag);
+				    "%s"",t,0x""%4.4x", spec->lu->name, pg_tag);
 				cp2[3] = plen;
 				plen2 += 4 + plen;
 
@@ -1189,17 +1190,17 @@ istgt_lu_dvd_scsi_inquiry(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8
 	return hlen + len;
 }
 
-#define MODE_SENSE_PAGE_INIT(B,L,P,SP)				\
-	do {											\
-		memset((B), 0, (L));						\
-		if ((SP) != 0x00) {							\
-			(B)[0] = (P) | 0x40; /* PAGE + SPF=1 */	\
-			(B)[1] = (SP);							\
-			DSET16(&(B)[2], (L) - 4);				\
-		} else {									\
-			(B)[0] = (P);							\
-			(B)[1] = (L) - 2;						\
-		}											\
+#define MODE_SENSE_PAGE_INIT(B,L,P,SP)					\
+	do {								\
+		memset((B), 0, (L));					\
+		if ((SP) != 0x00) {					\
+			(B)[0] = (P) | 0x40; /* PAGE + SPF=1 */		\
+			(B)[1] = (SP);					\
+			DSET16(&(B)[2], (L) - 4);			\
+		} else {						\
+			(B)[0] = (P);					\
+			(B)[1] = (L) - 2;				\
+		}							\
 	} while (0)
 
 static int
@@ -1221,7 +1222,7 @@ istgt_lu_dvd_scsi_mode_sense_page(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cd
 		/* Changeable values */
 		if (page != 0x08) {
 			/* not supported */
-			return 0;
+			return -1;
 		}
 	} else if (pc == 0x02) {
 		/* Default values */
@@ -1264,6 +1265,13 @@ istgt_lu_dvd_scsi_mode_sense_page(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cd
 		plen = 0x12 + 2;
 		MODE_SENSE_PAGE_INIT(cp, plen, page, subpage);
 		BDADD8(&cp[0], 1, 7); /* PS */
+		if (pc == 0x01) {
+			// Changeable values
+			BDADD8(&cp[2], 1, 2); /* WCE */
+			BDADD8(&cp[2], 1, 0); /* RCD */
+			len += plen;
+			break;
+		}
 		BDADD8(&cp[2], 1, 2); /* WCE */
 		//BDADD8(&cp[2], 1, 0); /* RCD */
 		if (spec->write_cache == 1) {
@@ -1415,15 +1423,15 @@ istgt_lu_dvd_scsi_mode_sense6(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, i
 
 	data[0] = 0;                    /* Mode Data Length */
 	if (spec->mload) {
-		data[1] = 0;                    /* Medium Type */
-		data[2] = 0;                    /* Device-Specific Parameter */
+		data[1] = 0;            /* Medium Type */
+		data[2] = 0;            /* Device-Specific Parameter */
 		if (spec->lu->readonly
-			|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+		    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 			BDADD8(&data[2], 1, 7);     /* WP */
 		}
 	} else {
-		data[1] = 0;                    /* Medium Type */
-		data[2] = 0;                    /* Device-Specific Parameter */
+		data[1] = 0;            /* Medium Type */
+		data[2] = 0;            /* Device-Specific Parameter */
 	}
 	data[3] = 0;                    /* Block Descripter Length */
 	hlen = 4;
@@ -1472,6 +1480,9 @@ istgt_lu_dvd_scsi_mode_sense6(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, i
 	data[3] = len;                  /* Block Descripter Length */
 
 	plen = istgt_lu_dvd_scsi_mode_sense_page(spec, conn, cdb, pc, page, subpage, &cp[0], alloc_len);
+	if (plen < 0) {
+		return -1;
+	}
 	cp += plen;
 
 	total = hlen + len + plen;
@@ -1489,15 +1500,15 @@ istgt_lu_dvd_scsi_mode_sense10(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, 
 
 	DSET16(&data[0], 0);            /* Mode Data Length */
 	if (spec->mload) {
-		data[2] = 0;                    /* Medium Type */
-		data[3] = 0;                    /* Device-Specific Parameter */
+		data[2] = 0;            /* Medium Type */
+		data[3] = 0;            /* Device-Specific Parameter */
 		if (spec->lu->readonly
-			|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+		    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 			BDADD8(&data[3], 1, 7);     /* WP */
 		}
 	} else {
-		data[2] = 0;                    /* Medium Type */
-		data[3] = 0;                    /* Device-Specific Parameter */
+		data[2] = 0;            /* Medium Type */
+		data[3] = 0;            /* Device-Specific Parameter */
 	}
 	if (llbaa) {
 		BDSET8(&data[4], 1, 1);      /* Long LBA */
@@ -1505,7 +1516,7 @@ istgt_lu_dvd_scsi_mode_sense10(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, 
 		BDSET8(&data[4], 0, 1);      /* Short LBA */
 	}
 	data[5] = 0;                    /* Reserved */
-	DSET16(&data[6], 0);  		    /* Block Descripter Length */
+	DSET16(&data[6], 0);  		/* Block Descripter Length */
 	hlen = 8;
 
 	cp = &data[8];
@@ -1552,6 +1563,9 @@ istgt_lu_dvd_scsi_mode_sense10(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, 
 	DSET16(&data[6], len);          /* Block Descripter Length */
 
 	plen = istgt_lu_dvd_scsi_mode_sense_page(spec, conn, cdb, pc, page, subpage, &cp[0], alloc_len);
+	if (plen < 0) {
+		return -1;
+	}
 	cp += plen;
 
 	total = hlen + len + plen;
@@ -1566,7 +1580,7 @@ istgt_lu_dvd_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf,
 	int rc;
 
 	if (len > bufsize) {
-		ISTGT_ERRLOG("bufsize(%d) too small\n", bufsize);
+		ISTGT_ERRLOG("bufsize(%zd) too small\n", bufsize);
 		return -1;
 	}
 	rc = istgt_iscsi_transfer_out(conn, lu_cmd, buf, bufsize, len);
@@ -1580,8 +1594,8 @@ istgt_lu_dvd_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf,
 static int
 istgt_lu_dvd_scsi_mode_select_page(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int pf, int sp, uint8_t *data, size_t len)
 {
+	size_t hlen, plen;
 	int ps, spf, page, subpage;
-	int hlen, plen;
 	int rc;
 
 	if (pf == 0) {
@@ -1662,15 +1676,15 @@ istgt_lu_dvd_scsi_mode_select_page(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *c
 	return 0;
 }
 
-#define FEATURE_DESCRIPTOR_INIT(B,L,FC)			\
-	do {										\
+#define FEATURE_DESCRIPTOR_INIT(B,L,FC)					\
+	do {								\
 		memset((B), 0, (L));					\
 		DSET16(&(B)[0], (FC));					\
-		(B)[3] = (L) - 4;						\
+		(B)[3] = (L) - 4;					\
 	} while (0)
 
 static int
-istgt_lu_dvd_get_feature_descriptor(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int fc, uint8_t *data)
+istgt_lu_dvd_get_feature_descriptor(ISTGT_LU_DVD *spec, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int fc, uint8_t *data)
 {
 	uint8_t *cp;
 	int hlen = 0, len = 0, plen;
@@ -1713,13 +1727,13 @@ istgt_lu_dvd_get_feature_descriptor(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *
 		plen = 8 + 4;
 		FEATURE_DESCRIPTOR_INIT(data, plen, fc);
 		/* Version(5-2) Persistent(1) Current(0) */
-		BDSET8W(&data[2], 0x01, 5, 4); /* MMC4 */
+		BDSET8W(&data[2], 0x01, 5, 4);          /* MMC4 */
 		BSET8(&data[2], 1);			/* Persistent=1 */
 		BSET8(&data[2], 0);			/* Current=1 */
 		hlen = 4;
 
 		/* Physical Interface Standard */
-		DSET32(&data[4], 0x00000000); /* Unspecified */
+		DSET32(&data[4], 0x00000000);           /* Unspecified */
 		/* DBE(0) */
 		BCLR8(&data[8], 0);			/* DBE=0*/
 		len = 8;
@@ -1759,7 +1773,7 @@ istgt_lu_dvd_get_feature_descriptor(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *
 		/* Blocking */
 		DSET16(&data[8], 1);
 		/* PP(0) */
-		BCLR8(&data[10], 0);		/* PP=0 */
+		BCLR8(&data[10], 0);			/* PP=0 */
 		len = 4;
 		break;
 
@@ -1882,7 +1896,7 @@ istgt_lu_dvd_scsi_get_configuration(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *
 }
 
 static int
-istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int keep, int ncr, uint8_t *data)
+istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int keep __attribute__((__unused__)), int ncr, uint8_t *data)
 {
 	uint8_t *cp;
 	int hlen = 0, len = 0;
@@ -1903,9 +1917,9 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 	}
 	if (ncr & (1 << 1)) {
 		/* Operational Change */
-		BDSET8W(&data[2], 0x01, 2, 3);	/* Notification Class */
+		BDSET8W(&data[2], 0x01, 2, 3);		/* Notification Class */
 		/* Event Code */
-		BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
+		BDSET8W(&cp[0], 0x00, 3, 4);		/* NoChg */
 		/* Persistent Prevented(7) Operational Status(3-0) */
 		BDSET8(&cp[1], 0, 7);			/* not prevented */
 		BDADD8W(&cp[1], 0, 3, 4);
@@ -1916,11 +1930,11 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 	}
 	if (ncr & (1 << 2)) {
 		/* Power Management */
-		BDSET8W(&data[2], 0x02, 2, 3);	/* Notification Class */
+		BDSET8W(&data[2], 0x02, 2, 3);		/* Notification Class */
 		/* Event Code */
-		BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
+		BDSET8W(&cp[0], 0x00, 3, 4);		/* NoChg */
 		/* Power Status */
-		cp[1] = 0x01;					/* Active */
+		cp[1] = 0x01;				/* Active */
 		/* Reserved */
 		cp[2] = 0;
 		/* Reserved */
@@ -1930,9 +1944,9 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 	}
 	if (ncr & (1 << 3)) {
 		/* External Request */
-		BDSET8W(&data[2], 0x03, 2, 3);	/* Notification Class */
+		BDSET8W(&data[2], 0x03, 2, 3);		/* Notification Class */
 		/* Event Code */
-		BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
+		BDSET8W(&cp[0], 0x00, 3, 4);		/* NoChg */
 		/* Persistent Prevented(7) External Request Status(3-0) */
 		BDSET8(&cp[1], 0, 7);			/* not prevented */
 		BDADD8W(&cp[1], 0, 3, 4);		/* Ready */
@@ -1943,7 +1957,7 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 	}
 	if (ncr & (1 << 4)) {
 		/* Media */
-		BDSET8W(&data[2], 0x04, 2, 3);	/* Notification Class */
+		BDSET8W(&data[2], 0x04, 2, 3);		/* Notification Class */
 		if (spec->mchanged) {
 			if (spec->mwait > 0) {
 				spec->mwait--;
@@ -1956,15 +1970,15 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 				BDSET8W(&cp[0], 0x02, 3, 4);	/* NewMedia */
 				/* Media Status */
 				/* Media Present(1) Door or Tray open(0) */
-				BDSET8(&cp[1], 1, 1);			/* media present */
-				BDADD8(&cp[1], 0, 0);			/* tray close */
+				BDSET8(&cp[1], 1, 1);		/* media present */
+				BDADD8(&cp[1], 0, 0);		/* tray close */
 			} else {
 				/* Event Code */
 				BDSET8W(&cp[0], 0x03, 3, 4);	/* MediaRemoval */
 				/* Media Status */
 				/* Media Present(1) Door or Tray open(0) */
-				BDSET8(&cp[1], 0, 1);			/* media absent */
-				BDADD8(&cp[1], 1, 0);			/* tray open */
+				BDSET8(&cp[1], 0, 1);		/* media absent */
+				BDADD8(&cp[1], 1, 0);		/* tray open */
 			}
 		} else {
 			if (spec->mwait > 0) {
@@ -1973,23 +1987,23 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 				BDSET8W(&cp[0], 0x01, 3, 4);	/* EjectRequest */
 				/* Media Status */
 				/* Media Present(1) Door or Tray open(0) */
-				BDSET8(&cp[1], 0, 1);			/* media absent */
-				BDADD8(&cp[1], 1, 0);			/* tray open */
+				BDSET8(&cp[1], 0, 1);		/* media absent */
+				BDADD8(&cp[1], 1, 0);		/* tray open */
 			} else {
 				if (spec->mload) {
 					/* Event Code */
 					BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
 					/* Media Status */
 					/* Media Present(1) Door or Tray open(0) */
-					BDSET8(&cp[1], 1, 1);			/* media present */
-					BDADD8(&cp[1], 0, 0);			/* tray close */
+					BDSET8(&cp[1], 1, 1);	/* media present */
+					BDADD8(&cp[1], 0, 0);	/* tray close */
 				} else {
 					/* Event Code */
 					BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
 					/* Media Status */
 					/* Media Present(1) Door or Tray open(0) */
-					BDSET8(&cp[1], 0, 1);			/* media absent */
-					BDADD8(&cp[1], 0, 0);			/* tray close */
+					BDSET8(&cp[1], 0, 1);	/* media absent */
+					BDADD8(&cp[1], 0, 0);	/* tray close */
 				}
 			}
 		}
@@ -2002,9 +2016,9 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 	}
 	if (ncr & (1 << 5)) {
 		/* Multi-Initiator */
-		BDSET8W(&data[2], 0x05, 2, 3);	/* Notification Class */
+		BDSET8W(&data[2], 0x05, 2, 3);		/* Notification Class */
 		/* Event Code */
-		BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
+		BDSET8W(&cp[0], 0x00, 3, 4);		/* NoChg */
 		/* Persistent Prevented(7) Multiple Initiator Status(3-0) */
 		BDSET8(&cp[1], 0, 7);			/* not prevented */
 		BDADD8W(&cp[1], 0, 3, 4);		/* Ready */
@@ -2015,12 +2029,12 @@ istgt_lu_dvd_scsi_get_event_status_notification(ISTGT_LU_DVD *spec, CONN_Ptr con
 	}
 	if (ncr & (1 << 6)) {
 		/* Device Busy */
-		BDSET8W(&data[2], 0x06, 2, 3);	/* Notification Class */
+		BDSET8W(&data[2], 0x06, 2, 3);		/* Notification Class */
 		/* Event Code */
-		BDSET8W(&cp[0], 0x00, 3, 4);	/* NoChg */
+		BDSET8W(&cp[0], 0x00, 3, 4);		/* NoChg */
 		/* Media Status */
 		/* Device Busy Status */
-		cp[1] = 0;						/* Not Busy */
+		cp[1] = 0;				/* Not Busy */
 		/* Time */
 		DSET16(&cp[2], 0);
 		len = 4;
@@ -2044,7 +2058,7 @@ event_available:
 }
 
 static int
-istgt_lu_dvd_scsi_mechanism_status(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, uint8_t *data)
+istgt_lu_dvd_scsi_mechanism_status(ISTGT_LU_DVD *spec, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), uint8_t *data)
 {
 	uint8_t *cp;
 	int hlen = 0, len = 0, plen;
@@ -2053,7 +2067,7 @@ istgt_lu_dvd_scsi_mechanism_status(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *c
 	/* Mechanism Status Header */
 	/* Fault(7) Changer State(6-5) Current Slot(4-0) */
 	BDSET8(&data[0], 0, 7);
-	BDADD8W(&data[0], 0x00, 6, 2);		/* Ready */
+	BDADD8W(&data[0], 0x00, 6, 2);			/* Ready */
 	BDADD8W(&data[0], (selected_slot & 0x1f), 4, 5); /* slot low bits */
 	/* Mechanism State(7-5) Door open(4) Current Slot(2-0) */
 	BDSET8W(&data[1], 0x00, 7, 3);		/* Idle */
@@ -2073,21 +2087,21 @@ istgt_lu_dvd_scsi_mechanism_status(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *c
 	if (spec->mchanged) {
 		if (spec->mload) {
 			/* Disc Present(7) Change(0) */
-			BDSET8(&cp[0], 1, 7);			/* disc in slot */
+			BDSET8(&cp[0], 1, 7);		/* disc in slot */
 		} else {
 			/* Disc Present(7) Change(0) */
-			BDSET8(&cp[0], 0, 7);			/* no disc in slot */
+			BDSET8(&cp[0], 0, 7);		/* no disc in slot */
 		}
-		BDADD8(&cp[0], 1, 0);				/* disc changed */
+		BDADD8(&cp[0], 1, 0);			/* disc changed */
 	} else {
 		if (spec->mload) {
 			/* Disc Present(7) Change(0) */
-			BDSET8(&cp[0], 1, 7);			/* disc in slot */
+			BDSET8(&cp[0], 1, 7);		/* disc in slot */
 		} else {
 			/* Disc Present(7) Change(0) */
-			BDSET8(&cp[0], 0, 7);			/* no disc in slot */
+			BDSET8(&cp[0], 0, 7);		/* no disc in slot */
 		}
-		BDADD8(&cp[0], 0, 0);				/* disc not changed */
+		BDADD8(&cp[0], 0, 0);			/* disc not changed */
 	}
 	/* CWP_V(1) CWP(0) */
 	BDSET8(&cp[1], 0, 1);				/* non Cartridge Write Protection */
@@ -2106,7 +2120,7 @@ istgt_lu_dvd_scsi_mechanism_status(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *c
 }
 
 static int
-istgt_lu_dvd_scsi_read_toc(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int msf, int format, int track, uint8_t *data)
+istgt_lu_dvd_scsi_read_toc(ISTGT_LU_DVD *spec, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int msf, int format, int track __attribute__((__unused__)), uint8_t *data)
 {
 	uint8_t *cp;
 	int hlen = 0, len = 0, plen;
@@ -2337,7 +2351,7 @@ istgt_lu_dvd_scsi_read_toc(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int 
 }
 
 static int
-istgt_lu_dvd_scsi_read_disc_information(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int datatype, uint8_t *data)
+istgt_lu_dvd_scsi_read_disc_information(ISTGT_LU_DVD *spec __attribute__((__unused__)), CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int datatype, uint8_t *data)
 {
 	int hlen = 0, len = 0;
 
@@ -2351,8 +2365,8 @@ istgt_lu_dvd_scsi_read_disc_information(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8
 		/* State of last Session(3-2) Disc Status(1-0) */
 		BDSET8W(&data[2], datatype, 7, 3);
 		BDADD8W(&data[2], 0, 4, 1);
-		BDADD8W(&data[2], 0x03, 3, 2);	/* Complete Session */
-		BDADD8W(&data[2], 0x02, 1, 2);	/* Finalized Disc */
+		BDADD8W(&data[2], 0x03, 3, 2);		/* Complete Session */
+		BDADD8W(&data[2], 0x02, 1, 2);		/* Finalized Disc */
 		/* Number of First Track on Disc */
 		data[3] = 1;
 		/* Number of Sessions (Least Significant Byte) */
@@ -2368,7 +2382,7 @@ istgt_lu_dvd_scsi_read_disc_information(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8
 		BDADD8(&data[7], 0, 4);			/* Disc Application Code Valid */
 		BDADD8W(&data[7], 0, 1, 2);		/* BG Format Status */
 		/* Disc Type */
-		data[8] = 0x00;					/* CD-DA or CD-ROM Disc */
+		data[8] = 0x00;				/* CD-DA or CD-ROM Disc */
 		/* Number of Sessions (Most Significant Byte) */
 		data[9] = (1 >> 8) & 0xff;
 		/* First Track Number in Last Session (Most Significant Byte) */
@@ -2448,7 +2462,7 @@ istgt_lu_dvd_scsi_read_disc_information(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8
 }
 
 static int
-istgt_lu_dvd_scsi_read_disc_structure(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int mediatype, int layernumber, int format, int agid, uint8_t *data)
+istgt_lu_dvd_scsi_read_disc_structure(ISTGT_LU_DVD *spec, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int mediatype, int layernumber __attribute__((__unused__)), int format, int agid __attribute__((__unused__)), uint8_t *data)
 {
 	uint8_t *cp;
 	int hlen = 0, len = 0;
@@ -2475,18 +2489,18 @@ istgt_lu_dvd_scsi_read_disc_structure(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t
 		cp = &data[hlen + len];
 
 		/* Disk Category(7-4) Part Version(3-0) */
-		BDSET8W(&cp[0], 0x00, 7, 4);	/* DVD-ROM */
-		BDADD8W(&cp[0], 0x01, 3, 4);	/* part 1 */
+		BDSET8W(&cp[0], 0x00, 7, 4);		/* DVD-ROM */
+		BDADD8W(&cp[0], 0x01, 3, 4);		/* part 1 */
 		/* Disc Size(7-4) Maximum Rate(0-3) */
-		BDSET8W(&cp[1], 0x00, 7, 4);	/* 120mm */
-		BDADD8W(&cp[1], 0x0f, 3, 4);	/* Not Specified */
+		BDSET8W(&cp[1], 0x00, 7, 4);		/* 120mm */
+		BDADD8W(&cp[1], 0x0f, 3, 4);		/* Not Specified */
 		/* Number of Layers(6-5) Track(4) Layer Type(3-0) */
-		BDSET8W(&cp[2], 0x00, 6, 2);	/* one layer */
-		BDADD8W(&cp[2], 0x00, 4, 1);	/* Parallel Track Path */
-		BDADD8W(&cp[2], 0x00, 3, 4);	/* embossed data */
+		BDSET8W(&cp[2], 0x00, 6, 2);		/* one layer */
+		BDADD8W(&cp[2], 0x00, 4, 1);		/* Parallel Track Path */
+		BDADD8W(&cp[2], 0x00, 3, 4);		/* embossed data */
 		/* Linear Density(7-4) Track Density(3-0) */
-		BDSET8W(&cp[3], 0x00, 7, 4);	/* 0.267 um/bit */
-		BDADD8W(&cp[3], 0x00, 3, 4);	/* 0.74 um/track */
+		BDSET8W(&cp[3], 0x00, 7, 4);		/* 0.267 um/bit */
+		BDADD8W(&cp[3], 0x00, 3, 4);		/* 0.74 um/track */
 		/* Starting Physical Sector Number of Data Area */
 		DSET32(&cp[4], 0);
 		/* End Physical Sector Number of Data Area */
@@ -2517,7 +2531,7 @@ istgt_lu_dvd_scsi_read_disc_structure(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t
 
 		/* Copyright Protection System Type */
 		cp[0] = 0x00;
-		//cp[0] = 0x01;	/* CSS/CPPM */
+		//cp[0] = 0x01;				/* CSS/CPPM */
 		/* Region Management Information */
 		cp[1] = 0x00;
 		//cp[1] = 0xff & ~(1 << (2 - 1));	/* 2=Japan */
@@ -2540,7 +2554,7 @@ istgt_lu_dvd_scsi_read_disc_structure(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t
 }
 
 static int
-istgt_lu_dvd_scsi_report_key(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, int keyclass, int agid, int keyformat, uint8_t *data)
+istgt_lu_dvd_scsi_report_key(ISTGT_LU_DVD *spec __attribute__((__unused__)), CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int keyclass, int agid __attribute__((__unused__)), int keyformat, uint8_t *data)
 {
 	uint8_t *cp;
 	int hlen = 0, len = 0;
@@ -2602,7 +2616,7 @@ istgt_lu_dvd_scsi_report_key(ISTGT_LU_DVD *spec, CONN_Ptr conn, uint8_t *cdb, in
 }
 
 static int
-istgt_lu_dvd_lbread(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lba, uint32_t len)
+istgt_lu_dvd_lbread(ISTGT_LU_DVD *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lba, uint32_t len)
 {
 	uint8_t *data;
 	uint64_t maxlba;
@@ -2625,8 +2639,8 @@ istgt_lu_dvd_lbread(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, 
 	nbytes = llen * blen;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-				   "Read: max=%"PRIu64", lba=%"PRIu64", len=%u\n",
-				   maxlba, lba, len);
+	    "Read: max=%"PRIu64", lba=%"PRIu64", len=%u\n",
+	    maxlba, lba, len);
 
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
 		ISTGT_ERRLOG("end of media\n");
@@ -2634,8 +2648,8 @@ istgt_lu_dvd_lbread(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, 
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("nbytes(%u) > iobufsize(%u)\n",
-					 nbytes, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("nbytes(%zu) > iobufsize(%zu)\n",
+		    (size_t) nbytes, lu_cmd->iobufsize);
 		return -1;
 	}
 	data = lu_cmd->iobuf;
@@ -2652,7 +2666,7 @@ istgt_lu_dvd_lbread(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, 
 		return -1;
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "Read %"PRId64"/%"PRIu64" bytes\n",
-				   rc, nbytes);
+	    rc, nbytes);
 
 	lu_cmd->data = data;
 	lu_cmd->data_len = rc;
@@ -2684,8 +2698,8 @@ istgt_lu_dvd_lbwrite(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd,
 	nbytes = llen * blen;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-				   "Write: max=%"PRIu64", lba=%"PRIu64", len=%u\n",
-				   maxlba, lba, len);
+	    "Write: max=%"PRIu64", lba=%"PRIu64", len=%u\n",
+	    maxlba, lba, len);
 
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
 		ISTGT_ERRLOG("end of media\n");
@@ -2694,13 +2708,13 @@ istgt_lu_dvd_lbwrite(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd,
 
 	if (nbytes > lu_cmd->iobufsize) {
 		ISTGT_ERRLOG("nbytes(%u) > iobufsize(%u)\n",
-					 nbytes, lu_cmd->iobufsize);
+		    nbytes, lu_cmd->iobufsize);
 		return -1;
 	}
 	data = lu_cmd->iobuf;
 
 	rc = istgt_lu_dvd_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-									lu_cmd->iobufsize, nbytes);
+	    lu_cmd->iobufsize, nbytes);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_dvd_transfer_data() failed\n");
 		return -1;
@@ -2727,7 +2741,7 @@ istgt_lu_dvd_lbwrite(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd,
 		return -1;
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "Wrote %"PRId64"/%"PRIu64" bytes\n",
-				   rc, nbytes);
+	    rc, nbytes);
 
 	lu_cmd->data_len = rc;
 
@@ -2755,8 +2769,8 @@ istgt_lu_dvd_lbsync(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, 
 	nbytes = llen * blen;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-				   "Sync: max=%"PRIu64", lba=%"PRIu64", len=%u\n",
-				   maxlba, lba, len);
+	    "Sync: max=%"PRIu64", lba=%"PRIu64", len=%u\n",
+	    maxlba, lba, len);
 
 	if (lba >= maxlba || llen > maxlba || lba > (maxlba - llen)) {
 		ISTGT_ERRLOG("end of media\n");
@@ -2774,7 +2788,7 @@ istgt_lu_dvd_lbsync(ISTGT_LU_DVD *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, 
 #endif
 
 static int
-istgt_lu_dvd_build_sense_data(ISTGT_LU_DVD *spec, uint8_t *data, int sk, int asc, int ascq)
+istgt_lu_dvd_build_sense_data(ISTGT_LU_DVD *spec __attribute__((__unused__)), uint8_t *data, int sk, int asc, int ascq)
 {
 	int rc;
 
@@ -2887,7 +2901,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	uint64_t lba;
 	uint32_t transfer_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	int rc;
 
 	if (lu_cmd == NULL)
@@ -2915,16 +2929,16 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	} else {
 		lun = 0xffffU;
 	}
-	if (lun >= lu->maxlun) {
+	if (lun >= (uint64_t) lu->maxlun) {
 #ifdef ISTGT_TRACE_DVD
 		ISTGT_ERRLOG("LU%d: LUN%4.4"PRIx64" invalid\n",
 					 lu->num, lun);
 #endif /* ISTGT_TRACE_DVD */
 		if (cdb[0] == SPC_INQUIRY) {
 			allocation_len = DGET16(&cdb[3]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -2936,7 +2950,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			memset(&data[1], 0, data_len - 1);
 			/* ADDITIONAL LENGTH */
 			data[4] = data_len - 5;
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			return 0;
 		} else {
@@ -2957,7 +2971,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "SCSI OP=0x%x, LUN=0x%16.16"PRIx64"\n",
-				   cdb[0], lu_cmd->lun);
+	    cdb[0], lu_cmd->lun);
 #ifdef ISTGT_TRACE_DVD
 	if (cdb[0] != SPC_TEST_UNIT_READY
 		&& cdb[0] != MMC_GET_EVENT_STATUS_NOTIFICATION) {
@@ -2976,21 +2990,21 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			return -1;
 		}
 		allocation_len = DGET16(&cdb[3]);
-		if (allocation_len > data_alloc_len) {
+		if (allocation_len > (size_t) data_alloc_len) {
 			ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-						 data_alloc_len);
+			    data_alloc_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			return -1;
 		}
 		memset(data, 0, allocation_len);
 		data_len = istgt_lu_dvd_scsi_inquiry(spec, conn, cdb,
-											 data, data_alloc_len);
+		    data, data_alloc_len);
 		if (data_len < 0) {
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			break;
 		}
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "INQUIRY", data, data_len);
-		lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+		lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 		lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		break;
 
@@ -3008,9 +3022,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "sel=%x\n", sel);
 
 			allocation_len = DGET32(&cdb[6]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3028,7 +3042,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				break;
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "REPORT LUNS", data, data_len);
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		}
 		break;
@@ -3201,7 +3215,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			/* Data-Out */
 			rc = istgt_lu_dvd_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-											lu_cmd->iobufsize, pllen);
+			    lu_cmd->iobufsize, pllen);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_dvd_transfer_data() failed\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -3243,7 +3257,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			/* Data-Out */
 			rc = istgt_lu_dvd_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-											lu_cmd->iobufsize, pllen);
+			    lu_cmd->iobufsize, pllen);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_dvd_transfer_data() failed\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -3297,9 +3311,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			subpage = cdb[3];
 
 			allocation_len = cdb[4];
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3307,13 +3321,15 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			data_len = istgt_lu_dvd_scsi_mode_sense6(spec, conn, cdb, dbd, pc, page, subpage, data, data_alloc_len);
 			if (data_len < 0) {
+				/* INVALID FIELD IN CDB */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x24, 0x00);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 #if 0
 			istgt_dump("MODE SENSE(6)", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3336,9 +3352,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			subpage = cdb[3];
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3346,25 +3362,25 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			data_len = istgt_lu_dvd_scsi_mode_sense10(spec, conn, cdb, llbaa, dbd, pc, page, subpage, data, data_alloc_len);
 			if (data_len < 0) {
+				/* INVALID FIELD IN CDB */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x24, 0x00);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 #if 0
 			istgt_dump("MODE SENSE(10)", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
 
-#if 0
 	case SPC_LOG_SELECT:
 	case SPC_LOG_SENSE:
 		/* INVALID COMMAND OPERATION CODE */
 		BUILD_SENSE(ILLEGAL_REQUEST, 0x20, 0x00);
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		break;
-#endif
 
 	case SPC_REQUEST_SENSE:
 		ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "REQUEST_SENSE\n");
@@ -3407,9 +3423,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 
 			allocation_len = cdb[4];
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3435,7 +3451,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			data_len -= 2;
 			memcpy(data, sense_data + 2, data_len);
 
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3462,9 +3478,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3477,7 +3493,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3498,9 +3514,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			ncr = cdb[4];
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3525,7 +3541,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				break;
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "EVENT", data, data_len);
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3563,9 +3579,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 
 			allocation_len = DGET16(&cdb[8]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3578,7 +3594,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3606,9 +3622,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			track = cdb[6];
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3621,7 +3637,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3647,9 +3663,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			datatype = BGET8W(&cdb[1], 2, 3);
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3662,7 +3678,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3691,9 +3707,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			agid = BGET8W(&cdb[10], 7, 2);
 
 			allocation_len = DGET16(&cdb[8]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3706,7 +3722,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3750,9 +3766,9 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			keyformat = BGET8W(&cdb[10], 5, 6);
 
 			allocation_len = DGET16(&cdb[8]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -3765,7 +3781,7 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -3808,8 +3824,8 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			lba = (uint64_t) DGET32(&cdb[2]);
 			transfer_len = (uint32_t) DGET16(&cdb[7]);
 			ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-						   "READ_10(lba %"PRIu64", len %u blocks)\n",
-						   lba, transfer_len);
+			    "READ_10(lba %"PRIu64", len %u blocks)\n",
+			    lba, transfer_len);
 			rc = istgt_lu_dvd_lbread(spec, conn, lu_cmd, lba, transfer_len);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_dvd_lbread() failed\n");
@@ -3842,8 +3858,8 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			lba = (uint64_t) DGET32(&cdb[2]);
 			transfer_len = (uint32_t) DGET32(&cdb[6]);
 			ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-						   "READ_12(lba %"PRIu64", len %u blocks)\n",
-						   lba, transfer_len);
+			    "READ_12(lba %"PRIu64", len %u blocks)\n",
+			    lba, transfer_len);
 			rc = istgt_lu_dvd_lbread(spec, conn, lu_cmd, lba, transfer_len);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_dvd_lbread() failed\n");
@@ -3893,8 +3909,8 @@ istgt_lu_dvd_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-				   "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
-				   " complete\n",
-				   cdb[0], lu_cmd->lun, lu_cmd->status);
+	    "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
+	    " complete\n",
+	    cdb[0], lu_cmd->lun, lu_cmd->status);
 	return 0;
 }

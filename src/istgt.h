@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -51,6 +51,17 @@
 #include "istgt_log.h"
 #include "istgt_conf.h"
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+#if defined(__GNUC__) && defined(__GNUC_MINOR__)
+#define ISTGT_GNUC_PREREQ(ma,mi) \
+	(__GNUC__ > (ma) || (__GNUC__ == (ma) && __GNUC_MINOR__ >= (mi)))
+#else
+#define ISTGT_GNUC_PREREQ(ma,mi) 0
+#endif
+
 #define MAX_TMPBUF 1024
 #define MAX_ADDRBUF 64
 #define MAX_INITIATOR_ADDR (MAX_ADDRBUF)
@@ -63,6 +74,7 @@
 #define MAX_PORTAL 1024
 #define MAX_INITIATOR 256
 #define MAX_NETMASK 256
+#define MAX_PORTAL_GROUP 4096
 #define MAX_INITIATOR_GROUP 4096
 #define MAX_LOGICAL_UNIT 4096
 #define MAX_R2T 256
@@ -77,7 +89,7 @@
 #define DEFAULT_MEDIADIRECTORY BUILD_VAR_ISTGT
 #define DEFAULT_NODEBASE "iqn.2007-09.jp.ne.peach.istgt"
 #define DEFAULT_PORT 3260
-#define DEFAULT_MAX_SESSIONS 16
+#define DEFAULT_MAX_SESSIONS 32
 #define DEFAULT_MAX_CONNECTIONS 4
 #define DEFAULT_MAXOUTSTANDINGR2T 16
 #define DEFAULT_DEFAULTTIME2WAIT 2
@@ -90,13 +102,13 @@
 #define DEFAULT_DATAPDUINORDER 1
 #define DEFAULT_DATASEQUENCEINORDER 1
 #define DEFAULT_ERRORRECOVERYLEVEL 0
-#define DEFAULT_TIMEOUT 30
+#define DEFAULT_TIMEOUT 60
 #define DEFAULT_NOPININTERVAL 20
 #define DEFAULT_MAXR2T 16
 
-#define ISTGT_PG_TAG_MAX 0x0000ffffU
-#define ISTGT_LU_TAG_MAX 0x0000ffffU
-#define ISTGT_UC_TAG     0x00010000U
+#define ISTGT_PG_TAG_MAX 0x0000ffff
+#define ISTGT_LU_TAG_MAX 0x0000ffff
+#define ISTGT_UC_TAG     0x00010000
 #define ISTGT_IOBUFSIZE (2 * 1024 * 1024)
 #define ISTGT_SNSBUFSIZE 4096
 #define ISTGT_SHORTDATASIZE 8192
@@ -115,6 +127,13 @@
 #endif
 #if defined (__FreeBSD__) || defined (__NetBSD__) || defined (__OpenBSD__)
 #define ISTGT_USE_KQUEUE
+#if defined (__FreeBSD__)
+#define ISTGT_EV_SET(kevp,a,b,c,d,e,f) EV_SET((kevp),(a),(b),(c),(d),(e),(void *)(f))
+#elif defined (__NetBSD__)
+#define ISTGT_EV_SET(kevp,a,b,c,d,e,f) EV_SET((kevp),(a),(b),(c),(d),(e),(intptr_t)(f))
+#else
+#define ISTGT_EV_SET(kevp,a,b,c,d,e,f) EV_SET((kevp),(a),(b),(c),(d),(e),(f))
+#endif
 #endif
 
 #define MTX_LOCK(MTX) \
@@ -150,17 +169,28 @@ typedef struct istgt_portal_t {
 	char *label;
 	char *host;
 	char *port;
+	int ref;
 	int idx;
 	int tag;
 	int sock;
 } PORTAL;
 typedef PORTAL *PORTAL_Ptr;
 
+typedef struct istgt_portal_group_t {
+	int nportals;
+	PORTAL **portals;
+	int ref;
+	int idx;
+	int tag;
+} PORTAL_GROUP;
+typedef PORTAL_GROUP *PORTAL_GROUP_Ptr;
+
 typedef struct istgt_initiator_group_t {
 	int ninitiators;
 	char **initiators;
 	int nnetmasks;
 	char **netmasks;
+	int ref;
 	int idx;
 	int tag;
 } INITIATOR_GROUP;
@@ -183,6 +213,7 @@ typedef enum {
 
 typedef struct istgt_t {
 	CONFIG *config;
+	CONFIG *config_old;
 	char *pidfile;
 	char *authfile;
 #if 0
@@ -193,18 +224,26 @@ typedef struct istgt_t {
 	char *nodebase;
 
 	pthread_attr_t attr;
+	pthread_mutexattr_t mutex_attr;
 	pthread_mutex_t mutex;
+	pthread_mutex_t state_mutex;
+	pthread_mutex_t reload_mutex;
+	pthread_cond_t reload_cond;
 
 	ISTGT_STATE state;
 	ISTGT_SWMODE swmode;
+	uint32_t generation;
+	int sig_pipe[2];
+	int daemon;
+	int pg_reload;
 
 	int nuctl_portal;
 	PORTAL uctl_portal[MAX_UCPORTAL];
 	int nuctl_netmasks;
 	char **uctl_netmasks;
 
-	int nportal;
-	PORTAL portal[MAX_PORTAL];
+	int nportal_group;
+	PORTAL_GROUP portal_group[MAX_PORTAL_GROUP];
 	int ninitiator_group;
 	INITIATOR_GROUP initiator_group[MAX_INITIATOR_GROUP];
 	int nlogical_unit;
@@ -245,7 +284,7 @@ int istgt_get_nintval(CF_SECTION *sp, const char *key, int idx);
 int istgt_get_intval(CF_SECTION *sp, const char *key);
 
 #ifdef USE_ATOMIC
-static inline int
+static inline __attribute__((__always_inline__)) int
 istgt_get_state(ISTGT_Ptr istgt)
 {
 	ISTGT_STATE state;
@@ -258,7 +297,7 @@ istgt_get_state(ISTGT_Ptr istgt)
 #endif
 	return state;
 }
-static inline void
+static inline __attribute__((__always_inline__)) void
 istgt_set_state(ISTGT_Ptr istgt, ISTGT_STATE state)
 {
 #if defined HAVE_ATOMIC_STORE_REL_INT
@@ -272,23 +311,44 @@ istgt_set_state(ISTGT_Ptr istgt, ISTGT_STATE state)
 #error "no atomic operation"
 #endif
 }
-#else
-static inline int
+#elif defined (USE_GCC_ATOMIC)
+/* gcc >= 4.1 builtin functions */
+static inline __attribute__((__always_inline__)) int
 istgt_get_state(ISTGT_Ptr istgt)
 {
 	ISTGT_STATE state;
-	MTX_LOCK(&istgt->mutex);
+	state = __sync_fetch_and_add((unsigned int *)&istgt->state, 0);
+	return state;
+}
+static inline __attribute__((__always_inline__)) void
+istgt_set_state(ISTGT_Ptr istgt, ISTGT_STATE state)
+{
+	ISTGT_STATE state_old;
+	do {
+		state_old = __sync_fetch_and_add((unsigned int *)&istgt->state, 0);
+	} while (__sync_val_compare_and_swap((unsigned int *)&istgt->state,
+		state_old, state) != state_old);
+#if defined (HAVE_GCC_ATOMIC_SYNCHRONIZE)
+	__sync_synchronize();
+#endif
+}
+#else /* !USE_ATOMIC && !USE_GCC_ATOMIC */
+static inline __attribute__((__always_inline__)) int
+istgt_get_state(ISTGT_Ptr istgt)
+{
+	ISTGT_STATE state;
+	MTX_LOCK(&istgt->state_mutex);
 	state = istgt->state;
-	MTX_UNLOCK(&istgt->mutex);
+	MTX_UNLOCK(&istgt->state_mutex);
 	return state;
 }
 
-static inline void
+static inline __attribute__((__always_inline__)) void
 istgt_set_state(ISTGT_Ptr istgt, ISTGT_STATE state)
 {
-	MTX_LOCK(&istgt->mutex);
+	MTX_LOCK(&istgt->state_mutex);
 	istgt->state = state;
-	MTX_UNLOCK(&istgt->mutex);
+	MTX_UNLOCK(&istgt->state_mutex);
 }
 #endif /* USE_ATOMIC */
 

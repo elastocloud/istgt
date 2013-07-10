@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,6 +31,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
 #ifndef ISTGT_LOG_FACILITY
 #define ISTGT_LOG_FACILITY LOG_LOCAL7
 #endif
@@ -52,25 +57,25 @@
 	istgt_noticelog(NULL, 0, NULL, __VA_ARGS__)
 #define ISTGT_ERRLOG(...) \
 	istgt_errlog(__FILE__, __LINE__, __func__, __VA_ARGS__)
-#define ISTGT_WARNLOG(...)												\
-	do {																\
-		if (g_warn_flag != 0) {											\
-			istgt_warnlog(__FILE__, __LINE__, __func__, __VA_ARGS__);	\
-		}																\
+#define ISTGT_WARNLOG(...)						\
+	do {								\
+		if (g_warn_flag != 0) {					\
+			istgt_warnlog(__FILE__, __LINE__, __func__, __VA_ARGS__); \
+		}							\
 	} while (0)
 #ifdef DEBUG
-#define ISTGT_TRACELOG(FLAG, ...) \
-	do {																\
-		if (g_trace_flag & (FLAG)) {									\
-			istgt_tracelog((FLAG), __FILE__, __LINE__, __func__,		\
-						   __VA_ARGS__);								\
-		}																\
+#define ISTGT_TRACELOG(FLAG, ...)					\
+	do {								\
+		if (g_trace_flag & (FLAG)) {				\
+			istgt_tracelog((FLAG), __FILE__, __LINE__, __func__, \
+			    __VA_ARGS__);				\
+		}							\
 	} while (0)
-#define ISTGT_TRACEDUMP(FLAG, LABEL, BUF, LEN) \
-	do {																\
-		if (g_trace_flag & (FLAG)) {									\
-			istgt_trace_dump((FLAG), (LABEL), (BUF), (LEN));			\
-		} \
+#define ISTGT_TRACEDUMP(FLAG, LABEL, BUF, LEN)				\
+	do {								\
+		if (g_trace_flag & (FLAG)) {				\
+			istgt_trace_dump((FLAG), (LABEL), (BUF), (LEN)); \
+		}							\
 	} while (0)
 #else
 #define ISTGT_TRACELOG(FLAG, ...)
@@ -79,13 +84,15 @@
 
 int istgt_set_log_facility(const char *facility);
 int istgt_set_log_priority(const char *priority);
-void istgt_log(const char *file, const int line, const char *func, const char *format, ...);
-void istgt_noticelog(const char *file, const int line, const char *func, const char *format, ...);
-void istgt_tracelog(const int flag, const char *file, const int line, const char *func, const char *format, ...);
-void istgt_errlog(const char *file, const int line, const char *func, const char *format, ...);
-void istgt_warnlog(const char *file, const int line, const char *func, const char *format, ...);
+void istgt_log(const char *file, const int line, const char *func, const char *format, ...) __attribute__((__format__(__printf__, 4, 5)));
+void istgt_noticelog(const char *file, const int line, const char *func, const char *format, ...) __attribute__((__format__(__printf__, 4, 5)));
+void istgt_tracelog(const int flag, const char *file, const int line, const char *func, const char *format, ...) __attribute__((__format__(__printf__, 5, 6)));
+void istgt_errlog(const char *file, const int line, const char *func, const char *format, ...) __attribute__((__format__(__printf__, 4, 5)));
+void istgt_warnlog(const char *file, const int line, const char *func, const char *format, ...) __attribute__((__format__(__printf__, 4, 5)));
 void istgt_open_log(void);
 void istgt_close_log(void);
+void istgtcontrol_open_log(void);
+void istgtcontrol_close_log(void);
 void istgt_set_trace_flag(int flag);
 void istgt_trace_dump(int flag, const char *label, const uint8_t *buf, size_t len);
 

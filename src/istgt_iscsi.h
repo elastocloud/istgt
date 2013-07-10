@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -143,8 +143,8 @@ typedef struct iscsi_pdu_t {
 	uint8_t shortdata[ISTGT_SHORTDATASIZE];
 	uint8_t *data;
 	uint8_t data_digest[ISCSI_DIGEST_LEN];
-	int total_ahs_len;
-	int data_segment_len;
+	size_t total_ahs_len;
+	size_t data_segment_len;
 	int copy_pdu;
 } ISCSI_PDU;
 typedef ISCSI_PDU *ISCSI_PDU_Ptr;

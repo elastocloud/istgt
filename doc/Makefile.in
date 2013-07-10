@@ -8,14 +8,17 @@ exec_prefix = @exec_prefix@
 bindir   = @bindir@
 sbindir  = @sbindir@
 sysconfdir = @sysconfdir@
-datadir  = @datarootdir@
+datarootdir = @datarootdir@
+datadir  = @datadir@
 libexecdir = @libexecdir@
-mandir   = $(prefix)/man
+mandir   = @mandir@
 
 configdir = @configdir@
 mediadir = @mediadir@
 
 SED      = @SED@
+INSTALL  = @INSTALL@
+MKDIR_P  = @MKDIR_P@
 
 source   = 
 header   = 
@@ -29,6 +32,7 @@ DISTFILES = Makefile.in \
 
 #########################################################################
 
+.PHONY: all install install-doc install-dirs install-doc-dirs
 all: istgt.1
 
 istgt.1:
@@ -37,29 +41,30 @@ istgt.1:
 		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.1.in > $@
 
 dist: $(DISTFILES)
-	mkdir $(DISTDIR)/$(subdir)
+	$(MKDIR_P) $(DISTDIR)/$(subdir)
 	cd $(srcdir); thisdir=`pwd`; \
 	for file in $(DISTFILES); do \
-	  cp -p $$thisdir/$$file $(DISTDIR)/$(subdir); \
+	    cp -p $$thisdir/$$file $(DISTDIR)/$(subdir); \
 	done
 
 install: install-dirs
-	install -c -m 0644 istgt.1 $(DESTDIR)$(mandir)/man1/
+	$(INSTALL) -m 0644 istgt.1 $(DESTDIR)$(mandir)/man1/
 	-rm -f $(DESTDIR)$(mandir)/man1/istgt.1.gz
 	gzip -9 $(DESTDIR)$(mandir)/man1/istgt.1
 
 install-doc: install-doc-dirs
-	install -c -m 0644 $(top_srcdir)/README $(DESTDIR)$(datadir)/doc/istgt/
-	install -c -m 0644 $(top_srcdir)/ChangeLog.jp $(DESTDIR)$(datadir)/doc/istgt/
-	install -c -m 0644 QUICKSTART $(DESTDIR)$(datadir)/doc/istgt/
-	install -c -m 0644 QUICKSTART.jp $(DESTDIR)$(datadir)/doc/istgt/
+	$(INSTALL) -m 0644 $(top_srcdir)/README $(DESTDIR)$(datadir)/doc/istgt/
+	$(INSTALL) -m 0644 $(top_srcdir)/ChangeLog.jp $(DESTDIR)$(datadir)/doc/istgt/
+	$(INSTALL) -m 0644 QUICKSTART $(DESTDIR)$(datadir)/doc/istgt/
+	$(INSTALL) -m 0644 QUICKSTART.jp $(DESTDIR)$(datadir)/doc/istgt/
 
 install-dirs:
-	mkdir -p $(DESTDIR)$(mandir)/man1
+	$(MKDIR_P) $(DESTDIR)$(mandir)/man1
 
 install-doc-dirs:
-	mkdir -p $(DESTDIR)$(datadir)/doc/istgt
+	$(MKDIR_P) $(DESTDIR)$(datadir)/doc/istgt
 
+.PHONY: clean distclean depend
 clean:
 	-rm -f istgt.1
 	-rm -f a.out *.o *.core

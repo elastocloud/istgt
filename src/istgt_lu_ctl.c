@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -52,6 +52,11 @@
 #include "istgt_lu.h"
 #include "istgt_iscsi.h"
 #include "istgt_proto.h"
+
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
 
 #define TIMEOUT_RW 60
 #define MAX_LINEBUF 4096
@@ -138,6 +143,8 @@ istgt_uctl_writeline(UCTL_Ptr uctl)
 	}
 	return UCTL_CMD_OK;
 }
+
+static int istgt_uctl_snprintf(UCTL_Ptr uctl, const char *format, ...) __attribute__((__format__(__printf__, 2, 3)));
 
 static int
 istgt_uctl_snprintf(UCTL_Ptr uctl, const char *format, ...)
@@ -1010,6 +1017,10 @@ istgt_uctl_cmd_reset(UCTL_Ptr uctl)
 		goto error_return;
 	}
 	llp = &lu->lun[lun_i];
+	if (llp->type == ISTGT_LU_LUN_TYPE_NONE) {
+		istgt_uctl_snprintf(uctl, "ERR no LUN\n");
+		goto error_return;
+	}
 
 	/* reset lun */
 	switch (lu->type) {
@@ -1317,7 +1328,7 @@ istgt_free_uctl(UCTL_Ptr uctl)
 }
 
 int
-istgt_create_uctl(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr *sa, socklen_t salen)
+istgt_create_uctl(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr *sa, socklen_t salen __attribute__((__unused__)))
 {
 	char buf[MAX_TMPBUF];
 	UCTL_Ptr uctl;
@@ -1466,7 +1477,7 @@ istgt_create_uctl(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 }
 
 int
-istgt_init_uctl(ISTGT_Ptr istgt)
+istgt_uctl_init(ISTGT_Ptr istgt)
 {
 	CF_SECTION *sp;
 	const char *val;
@@ -1573,5 +1584,17 @@ istgt_init_uctl(ISTGT_Ptr istgt)
 		    istgt->uctl_auth_group);
 	}
 
+	return 0;
+}
+
+int
+istgt_uctl_shutdown(ISTGT_Ptr istgt)
+{
+	int i;
+
+	for (i = 0; i < istgt->nuctl_netmasks; i++) {
+		xfree(istgt->uctl_netmasks[i]);
+	}
+	xfree(istgt->uctl_netmasks);
 	return 0;
 }

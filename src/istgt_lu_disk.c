@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -59,6 +59,11 @@
 #include "istgt_scsi.h"
 #include "istgt_queue.h"
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
 #ifndef O_FSYNC
 #define O_FSYNC O_SYNC
 #endif
@@ -83,75 +88,6 @@ typedef enum {
 #define PR_ALLOW_WERR  0x0002
 #define PR_ALLOW_EARR  0x0001
 
-typedef struct istgt_lu_pr_key_t {
-	uint64_t key;
-
-	/* transport IDs */
-	char *registered_initiator_port;
-	char *registered_target_port;
-	/* PERSISTENT RESERVE OUT received from */
-	int pg_idx; /* relative target port */
-	int pg_tag; /* target port group */
-
-	int ninitiator_ports;
-	char **initiator_ports;
-	int all_tpg;
-} ISTGT_LU_PR_KEY;
-
-typedef struct istgt_lu_disk_t {
-	ISTGT_LU_Ptr lu;
-	int num;
-	int lun;
-
-	int fd;
-	const char *file;
-	uint64_t fsize;
-	uint64_t foffset;
-	uint64_t size;
-	uint64_t blocklen;
-	uint64_t blockcnt;
-
-#ifdef HAVE_UUID_H
-	uuid_t uuid;
-#endif /* HAVE_UUID_H */
-
-	/* cache flags */
-	int read_cache;
-	int write_cache;
-	/* parts for cache */
-	int wbufsize;
-	uint8_t *wbuf;
-	uint64_t woffset;
-	uint64_t wnbytes;
-	int req_write_cache;
-	int err_write_cache;
-
-	/* thin provisioning */
-	int thin_provisioning;
-
-	/* for ats */
-	pthread_mutex_t ats_mutex;
-
-	int queue_depth;
-	pthread_mutex_t cmd_queue_mutex;
-	ISTGT_QUEUE cmd_queue;
-	pthread_mutex_t wait_lu_task_mutex;
-	ISTGT_LU_TASK_Ptr wait_lu_task;
-
-	/* PERSISTENT RESERVE */
-	int npr_keys;
-	ISTGT_LU_PR_KEY pr_keys[MAX_LU_RESERVE];
-	uint32_t pr_generation;
-
-	char *rsv_port;
-	uint64_t rsv_key;
-	int rsv_scope;
-	int rsv_type;
-
-	/* SCSI sense code */
-	volatile int sense;
-} ISTGT_LU_DISK;
-
 #define BUILD_SENSE(SK,ASC,ASCQ)					\
 	do {								\
 		*sense_len =						\
@@ -172,7 +108,7 @@ static int istgt_lu_disk_build_sense_data(ISTGT_LU_DISK *spec, uint8_t *data, in
 static int istgt_lu_disk_queue_abort_ITL(ISTGT_LU_DISK *spec, const char *initiator_port);
 
 static int
-istgt_lu_disk_open(ISTGT_LU_DISK *spec, int flags, int mode)
+istgt_lu_disk_open_raw(ISTGT_LU_DISK *spec, int flags, int mode)
 {
 	int rc;
 
@@ -186,7 +122,7 @@ istgt_lu_disk_open(ISTGT_LU_DISK *spec, int flags, int mode)
 }
 
 static int
-istgt_lu_disk_close(ISTGT_LU_DISK *spec)
+istgt_lu_disk_close_raw(ISTGT_LU_DISK *spec)
 {
 	int rc;
 
@@ -203,7 +139,7 @@ istgt_lu_disk_close(ISTGT_LU_DISK *spec)
 
 #if 0
 static off_t
-istgt_lu_disk_lseek(ISTGT_LU_DISK *spec, off_t offset, int whence)
+istgt_lu_disk_lseek_raw(ISTGT_LU_DISK *spec, off_t offset, int whence)
 {
 	off_t rc;
 
@@ -217,7 +153,7 @@ istgt_lu_disk_lseek(ISTGT_LU_DISK *spec, off_t offset, int whence)
 #endif
 
 static int64_t
-istgt_lu_disk_seek(ISTGT_LU_DISK *spec, uint64_t offset)
+istgt_lu_disk_seek_raw(ISTGT_LU_DISK *spec, uint64_t offset)
 {
 	off_t rc;
 
@@ -230,7 +166,7 @@ istgt_lu_disk_seek(ISTGT_LU_DISK *spec, uint64_t offset)
 }
 
 static int64_t
-istgt_lu_disk_read(ISTGT_LU_DISK *spec, void *buf, uint64_t nbytes)
+istgt_lu_disk_read_raw(ISTGT_LU_DISK *spec, void *buf, uint64_t nbytes)
 {
 	int64_t rc;
 
@@ -256,7 +192,7 @@ istgt_lu_disk_read(ISTGT_LU_DISK *spec, void *buf, uint64_t nbytes)
 			if (rc < 0) {
 				return -1;
 			}
-			if (rc != request) {
+			if ((uint64_t) rc != request) {
 				/* read size < request */
 				if (spec->foffset + rc >= spec->size) {
 					rc = spec->size - spec->foffset;
@@ -286,7 +222,7 @@ istgt_lu_disk_read(ISTGT_LU_DISK *spec, void *buf, uint64_t nbytes)
 }
 
 static int64_t
-istgt_lu_disk_write(ISTGT_LU_DISK *spec, const void *buf, uint64_t nbytes)
+istgt_lu_disk_write_raw(ISTGT_LU_DISK *spec, const void *buf, uint64_t nbytes)
 {
 	int64_t rc;
 
@@ -345,7 +281,7 @@ istgt_lu_disk_write(ISTGT_LU_DISK *spec, const void *buf, uint64_t nbytes)
 }
 
 static int64_t
-istgt_lu_disk_sync(ISTGT_LU_DISK *spec, uint64_t offset, uint64_t nbytes)
+istgt_lu_disk_sync_raw(ISTGT_LU_DISK *spec, uint64_t offset, uint64_t nbytes)
 {
 	int64_t rc;
 
@@ -358,7 +294,7 @@ istgt_lu_disk_sync(ISTGT_LU_DISK *spec, uint64_t offset, uint64_t nbytes)
 }
 
 static int
-istgt_lu_disk_allocate(ISTGT_LU_DISK *spec)
+istgt_lu_disk_allocate_raw(ISTGT_LU_DISK *spec)
 {
 	uint8_t *data;
 	uint64_t fsize;
@@ -382,13 +318,13 @@ istgt_lu_disk_allocate(ISTGT_LU_DISK *spec)
 	spec->fsize = fsize;
 
 	offset = size - nbytes;
-	rc = istgt_lu_disk_seek(spec, offset);
+	rc = istgt_lu_disk_seek_raw(spec, offset);
 	if (rc == -1) {
 		ISTGT_ERRLOG("lu_disk_seek() failed\n");
 		xfree(data);
 		return -1;
 	}
-	rc = istgt_lu_disk_read(spec, data, nbytes);
+	rc = istgt_lu_disk_read_raw(spec, data, nbytes);
 	/* EOF is OK */
 	if (rc == -1) {
 		ISTGT_ERRLOG("lu_disk_read() failed\n");
@@ -403,14 +339,14 @@ istgt_lu_disk_allocate(ISTGT_LU_DISK *spec)
 				fsize = size;
 			}
 			offset = fsize - nbytes;
-			rc = istgt_lu_disk_seek(spec, offset);
+			rc = istgt_lu_disk_seek_raw(spec, offset);
 			if (rc == -1) {
 				ISTGT_ERRLOG("lu_disk_seek() failed\n");
 				xfree(data);
 				return -1;
 			}
-			rc = istgt_lu_disk_write(spec, data, nbytes);
-			if (rc == -1 || rc != nbytes) {
+			rc = istgt_lu_disk_write_raw(spec, data, nbytes);
+			if (rc == -1 || (uint64_t) rc != nbytes) {
 				ISTGT_ERRLOG("lu_disk_write() failed\n");
 				xfree(data);
 				return -1;
@@ -420,14 +356,14 @@ istgt_lu_disk_allocate(ISTGT_LU_DISK *spec)
 		}
 	} else {
 		/* allocate complete size */
-		rc = istgt_lu_disk_seek(spec, offset);
+		rc = istgt_lu_disk_seek_raw(spec, offset);
 		if (rc == -1) {
 			ISTGT_ERRLOG("lu_disk_seek() failed\n");
 			xfree(data);
 			return -1;
 		}
-		rc = istgt_lu_disk_write(spec, data, nbytes);
-		if (rc == -1 || rc != nbytes) {
+		rc = istgt_lu_disk_write_raw(spec, data, nbytes);
+		if (rc == -1 || (uint64_t) rc != nbytes) {
 			ISTGT_ERRLOG("lu_disk_write() failed\n");
 			xfree(data);
 			return -1;
@@ -440,7 +376,7 @@ istgt_lu_disk_allocate(ISTGT_LU_DISK *spec)
 }
 
 static int
-istgt_lu_disk_setcache(ISTGT_LU_DISK *spec)
+istgt_lu_disk_setcache_raw(ISTGT_LU_DISK *spec)
 {
 	int flags;
 	int rc;
@@ -478,8 +414,36 @@ istgt_lu_disk_setcache(ISTGT_LU_DISK *spec)
 	return 0;
 }
 
+static const char *
+istgt_get_disktype_by_ext(const char *file)
+{
+	size_t n;
+
+	if (file == NULL || file[0] == '\n')
+		return "RAW";
+
+	n = strlen(file);
+	if (n > 4 && strcasecmp(file + (n - 4), ".vdi") == 0)
+		return "VDI";
+	if (n > 4 && strcasecmp(file + (n - 4), ".vhd") == 0)
+		return "VHD";
+	if (n > 5 && strcasecmp(file + (n - 5), ".vmdk") == 0)
+		return "VMDK";
+
+	if (n > 5 && strcasecmp(file + (n - 5), ".qcow") == 0)
+		return "QCOW";
+	if (n > 6 && strcasecmp(file + (n - 6), ".qcow2") == 0)
+		return "QCOW";
+	if (n > 4 && strcasecmp(file + (n - 4), ".qed") == 0)
+		return "QED";
+	if (n > 5 && strcasecmp(file + (n - 5), ".vhdx") == 0)
+		return "VHDX";
+
+	return "RAW";
+}
+
 int
-istgt_lu_disk_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_DISK *spec;
 	uint64_t gb_size;
@@ -541,6 +505,8 @@ istgt_lu_disk_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		spec->req_write_cache = 0;
 		spec->err_write_cache = 0;
 		spec->thin_provisioning = 0;
+		spec->watssize = 0;
+		spec->watsbuf = NULL;
 
 		rc = pthread_mutex_init(&spec->ats_mutex, NULL);
 		if (rc != 0) {
@@ -549,7 +515,7 @@ istgt_lu_disk_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		}
 
 		spec->queue_depth = lu->queue_depth;
-		rc = pthread_mutex_init(&spec->cmd_queue_mutex, NULL);
+		rc = pthread_mutex_init(&spec->cmd_queue_mutex, &istgt->mutex_attr);
 		if (rc != 0) {
 			ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
 			return -1;
@@ -588,7 +554,9 @@ istgt_lu_disk_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		uuid_create(&spec->uuid, &status);
 		if (status != uuid_s_ok) {
 			ISTGT_ERRLOG("LU%d: LUN%d: uuid_create() failed\n", lu->num, i);
+			(void) pthread_mutex_destroy(&spec->wait_lu_task_mutex);
 			(void) pthread_mutex_destroy(&spec->cmd_queue_mutex);
+			(void) pthread_mutex_destroy(&spec->ats_mutex);
 			istgt_queue_destroy(&spec->cmd_queue);
 			xfree(spec);
 			return -1;
@@ -597,68 +565,99 @@ istgt_lu_disk_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 
 		spec->file = lu->lun[i].u.storage.file;
 		spec->size = lu->lun[i].u.storage.size;
-		spec->blocklen = lu->blocklen;
-		if (spec->blocklen != 512
-		    && spec->blocklen != 1024
-		    && spec->blocklen != 2048
-		    && spec->blocklen != 4096
-		    && spec->blocklen != 8192
-		    && spec->blocklen != 16384
-		    && spec->blocklen != 32768
-		    && spec->blocklen != 65536
-		    && spec->blocklen != 131072
-		    && spec->blocklen != 262144
-		    && spec->blocklen != 524288) {
-			ISTGT_ERRLOG("LU%d: LUN%d: invalid blocklen %"PRIu64"\n",
-			    lu->num, i, spec->blocklen);
-		error_return:
-			(void) pthread_mutex_destroy(&spec->cmd_queue_mutex);
-			istgt_queue_destroy(&spec->cmd_queue);
-			xfree(spec);
-			return -1;
-		}
-		spec->blockcnt = spec->size / spec->blocklen;
-		if (spec->blockcnt == 0) {
-			ISTGT_ERRLOG("LU%d: LUN%d: size zero\n", lu->num, i);
-			goto error_return;
-		}
+		spec->disktype = istgt_get_disktype_by_ext(spec->file);
+		if (strcasecmp(spec->disktype, "VDI") == 0
+		    || strcasecmp(spec->disktype, "VHD") == 0
+		    || strcasecmp(spec->disktype, "VMDK") == 0
+		    || strcasecmp(spec->disktype, "QCOW") == 0
+		    || strcasecmp(spec->disktype, "QED") == 0
+		    || strcasecmp(spec->disktype, "VHDX") == 0) {
+			rc = istgt_lu_disk_vbox_lun_init(spec, istgt, lu);
+			if (rc < 0) {
+				ISTGT_ERRLOG("LU%d: LUN%d: lu_disk_vbox_lun_init() failed\n",
+				    lu->num, i);
+				goto error_return;
+			}
+		} else if (strcasecmp(spec->disktype, "RAW") == 0) {
+			spec->open = istgt_lu_disk_open_raw;
+			spec->close = istgt_lu_disk_close_raw;
+			spec->seek = istgt_lu_disk_seek_raw;
+			spec->read = istgt_lu_disk_read_raw;
+			spec->write = istgt_lu_disk_write_raw;
+			spec->sync = istgt_lu_disk_sync_raw;
+			spec->allocate = istgt_lu_disk_allocate_raw;
+			spec->setcache = istgt_lu_disk_setcache_raw;
+
+			spec->blocklen = lu->blocklen;
+			if (spec->blocklen != 512
+			    && spec->blocklen != 1024
+			    && spec->blocklen != 2048
+			    && spec->blocklen != 4096
+			    && spec->blocklen != 8192
+			    && spec->blocklen != 16384
+			    && spec->blocklen != 32768
+			    && spec->blocklen != 65536
+			    && spec->blocklen != 131072
+			    && spec->blocklen != 262144
+			    && spec->blocklen != 524288) {
+				ISTGT_ERRLOG("LU%d: LUN%d: invalid blocklen %"PRIu64"\n",
+				    lu->num, i, spec->blocklen);
+			error_return:
+				(void) pthread_mutex_destroy(&spec->wait_lu_task_mutex);
+				(void) pthread_mutex_destroy(&spec->cmd_queue_mutex);
+				(void) pthread_mutex_destroy(&spec->ats_mutex);
+				istgt_queue_destroy(&spec->cmd_queue);
+				xfree(spec);
+				return -1;
+			}
+			spec->blockcnt = spec->size / spec->blocklen;
+			if (spec->blockcnt == 0) {
+				ISTGT_ERRLOG("LU%d: LUN%d: size zero\n", lu->num, i);
+				goto error_return;
+			}
 
 #if 0
-		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-		    "LU%d: LUN%d file=%s, size=%"PRIu64"\n",
-		    lu->num, i, spec->file, spec->size);
-		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-		    "LU%d: LUN%d %"PRIu64" blocks, %"
-		    PRIu64" bytes/block\n",
-		    lu->num, i, spec->blockcnt, spec->blocklen);
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+			    "LU%d: LUN%d file=%s, size=%"PRIu64"\n",
+			    lu->num, i, spec->file, spec->size);
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+			    "LU%d: LUN%d %"PRIu64" blocks, %"
+			    PRIu64" bytes/block\n",
+			    lu->num, i, spec->blockcnt, spec->blocklen);
 #endif
-		printf("LU%d: LUN%d file=%s, size=%"PRIu64"\n",
-		    lu->num, i, spec->file, spec->size);
-		printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
-		    lu->num, i, spec->blockcnt, spec->blocklen);
-
-		flags = lu->readonly ? O_RDONLY : O_RDWR;
-		newfile = 0;
-		rc = istgt_lu_disk_open(spec, flags, 0666);
-		if (rc < 0) {
-			newfile = 1;
-			flags = lu->readonly ? O_RDONLY : (O_CREAT | O_EXCL | O_RDWR);
-			rc = istgt_lu_disk_open(spec, flags, 0666);
+			printf("LU%d: LUN%d file=%s, size=%"PRIu64"\n",
+			    lu->num, i, spec->file, spec->size);
+			printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
+			    lu->num, i, spec->blockcnt, spec->blocklen);
+			
+			flags = lu->readonly ? O_RDONLY : O_RDWR;
+			newfile = 0;
+			rc = spec->open(spec, flags, 0666);
 			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: LUN%d: open error\n", lu->num, i);
+				newfile = 1;
+				flags = lu->readonly ? O_RDONLY : (O_CREAT | O_EXCL | O_RDWR);
+				rc = spec->open(spec, flags, 0666);
+				if (rc < 0) {
+					ISTGT_ERRLOG("LU%d: LUN%d: open error(errno=%d)\n",
+					    lu->num, i, errno);
+					goto error_return;
+				}
+			}
+			if (!lu->readonly) {
+				rc = spec->allocate(spec);
+				if (rc < 0) {
+					ISTGT_ERRLOG("LU%d: LUN%d: allocate error\n",
+					    lu->num, i);
+					goto error_return;
+				}
+			}
+			rc = spec->setcache(spec);
+			if (rc < 0) {
+				ISTGT_ERRLOG("LU%d: LUN%d: setcache error\n", lu->num, i);
 				goto error_return;
 			}
-		}
-		if (!lu->readonly) {
-			rc = istgt_lu_disk_allocate(spec);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: LUN%d: allocate error\n", lu->num, i);
-				goto error_return;
-			}
-		}
-		rc = istgt_lu_disk_setcache(spec);
-		if (rc < 0) {
-			ISTGT_ERRLOG("LU%d: LUN%d: setcache error\n", lu->num, i);
+		} else {
+			ISTGT_ERRLOG("LU%d: LUN%d: unsupported format\n", lu->num, i);
 			goto error_return;
 		}
 
@@ -728,7 +727,7 @@ istgt_lu_disk_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 }
 
 int
-istgt_lu_disk_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_disk_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_DISK *spec;
 	ISTGT_LU_PR_KEY *prkey;
@@ -751,17 +750,34 @@ istgt_lu_disk_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		}
 		spec = (ISTGT_LU_DISK *) lu->lun[i].spec;
 
-		if (!spec->lu->readonly) {
-			rc = istgt_lu_disk_sync(spec, 0, spec->size);
+		if (strcasecmp(spec->disktype, "VDI") == 0
+		    || strcasecmp(spec->disktype, "VHD") == 0
+		    || strcasecmp(spec->disktype, "VMDK") == 0
+		    || strcasecmp(spec->disktype, "QCOW") == 0
+		    || strcasecmp(spec->disktype, "QED") == 0
+		    || strcasecmp(spec->disktype, "VHDX") == 0) {
+			rc = istgt_lu_disk_vbox_lun_shutdown(spec, istgt, lu);
 			if (rc < 0) {
-				//ISTGT_ERRLOG("LU%d: lu_disk_sync() failed\n", lu->num);
+				ISTGT_ERRLOG("LU%d: lu_disk_vbox_lun_shutdown() failed\n",
+				    lu->num);
 				/* ignore error */
 			}
-		}
-		rc = istgt_lu_disk_close(spec);
-		if (rc < 0) {
-			//ISTGT_ERRLOG("LU%d: lu_disk_close() failed\n", lu->num);
-			/* ignore error */
+		} else if (strcasecmp(spec->disktype, "RAW") == 0) {
+			if (!spec->lu->readonly) {
+				rc = spec->sync(spec, 0, spec->size);
+				if (rc < 0) {
+					//ISTGT_ERRLOG("LU%d: lu_disk_sync() failed\n", lu->num);
+					/* ignore error */
+				}
+			}
+			rc = spec->close(spec);
+			if (rc < 0) {
+				//ISTGT_ERRLOG("LU%d: lu_disk_close() failed\n", lu->num);
+				/* ignore error */
+			}
+		} else {
+			ISTGT_ERRLOG("LU%d: LUN%d: unsupported format\n", lu->num, i);
+			return -1;
 		}
 
 		for (j = 0; j < spec->npr_keys; j++) {
@@ -790,6 +806,7 @@ istgt_lu_disk_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			//ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
 			/* ignore error */
 		}
+		xfree(spec->watsbuf);
 		xfree(spec->wbuf);
 		xfree(spec);
 		lu->lun[i].spec = NULL;
@@ -1000,7 +1017,7 @@ istgt_lu_set_extid(uint8_t *buf, uint64_t vid, uint64_t vide)
 }
 
 static int
-istgt_lu_disk_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int sel, uint8_t *data, int alloc_len)
+istgt_lu_disk_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int sel, uint8_t *data, int alloc_len)
 {
 	uint64_t fmt_lun, lun, method;
 	int hlen = 0, len = 0;
@@ -1043,7 +1060,7 @@ istgt_lu_disk_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int
 			method = 0x00U;
 			fmt_lun = (method & 0x03U) << 62;
 			fmt_lun |= (lun & 0x00ffU) << 48;
-		} else if (lu->maxlun <= 0x4000U) {
+		} else if (lu->maxlun <= 0x4000) {
 			/* below 16384 */
 			method = 0x01U;
 			fmt_lun = (method & 0x03U) << 62;
@@ -1249,8 +1266,7 @@ istgt_lu_disk_scsi_inquiry(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, uin
 
 			/* IDENTIFIER */
 			plen = snprintf((char *) &cp[4], MAX_TARGET_NAME,
-			    "%s",
-			    spec->lu->name);
+			    "%s", spec->lu->name);
 			cp[3] = plen;
 			len += 4 + plen;
 
@@ -1272,9 +1288,7 @@ istgt_lu_disk_scsi_inquiry(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, uin
 
 			/* IDENTIFIER */
 			plen = snprintf((char *) &cp[4], MAX_TARGET_NAME,
-			    "%s"",t,0x""%4.4x",
-			    spec->lu->name,
-			    conn->portal.tag);
+			    "%s"",t,0x""%4.4x", spec->lu->name, conn->portal.tag);
 			cp[3] = plen;
 			len += 4 + plen;
 
@@ -1525,9 +1539,7 @@ istgt_lu_disk_scsi_inquiry(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, uin
 
 				/* IDENTIFIER */
 				plen = snprintf((char *) &cp2[4], MAX_TARGET_NAME,
-				    "%s"",t,0x""%4.4x",
-				    spec->lu->name,
-				    pg_tag);
+				    "%s"",t,0x""%4.4x", spec->lu->name, pg_tag);
 				cp2[3] = plen;
 				plen2 += 4 + plen;
 
@@ -1558,7 +1570,7 @@ istgt_lu_disk_scsi_inquiry(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, uin
 			/* WSNZ(0) */
 			BDSET8(&data[4], 0, 0); /* support zero length in WRITE SAME */
 			/* MAXIMUM COMPARE AND WRITE LENGTH */
-			blocks = ISTGT_LU_WORK_BLOCK_SIZE / (uint32_t) spec->blocklen;
+			blocks = ISTGT_LU_WORK_ATS_BLOCK_SIZE / (uint32_t) spec->blocklen;
 			if (blocks > 0xff) {
 				blocks = 0xff;
 			}
@@ -1791,7 +1803,7 @@ istgt_lu_disk_scsi_mode_sense_page(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *
 		/* Changeable values */
 		if (page != 0x08) {
 			/* not supported */
-			return 0;
+			return -1;
 		}
 	} else if (pc == 0x02) {
 		/* Default values */
@@ -1852,6 +1864,13 @@ istgt_lu_disk_scsi_mode_sense_page(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *
 		plen = 0x12 + 2;
 		MODE_SENSE_PAGE_INIT(cp, plen, page, subpage);
 		BDADD8(&cp[0], 1, 7); /* PS */
+		if (pc == 0x01) {
+			// Changeable values
+			BDADD8(&cp[2], 1, 2); /* WCE */
+			BDADD8(&cp[2], 1, 0); /* RCD */
+			len += plen;
+			break;
+		}
 		BDADD8(&cp[2], 1, 2); /* WCE */
 		//BDADD8(&cp[2], 1, 0); /* RCD */
 		{
@@ -2088,6 +2107,9 @@ istgt_lu_disk_scsi_mode_sense6(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb,
 	data[3] = len;                  /* Block Descripter Length */
 
 	plen = istgt_lu_disk_scsi_mode_sense_page(spec, conn, cdb, pc, page, subpage, &cp[0], alloc_len);
+	if (plen < 0) {
+		return -1;
+	}
 	cp += plen;
 
 	total = hlen + len + plen;
@@ -2146,6 +2168,9 @@ istgt_lu_disk_scsi_mode_sense10(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb
 	DSET16(&data[6], len);          /* Block Descripter Length */
 
 	plen = istgt_lu_disk_scsi_mode_sense_page(spec, conn, cdb, pc, page, subpage, &cp[0], alloc_len);
+	if (plen < 0) {
+		return -1;
+	}
 	cp += plen;
 
 	total = hlen + len + plen;
@@ -2161,7 +2186,7 @@ istgt_lu_disk_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf
 
 	if (lu_cmd->lu->queue_depth == 0) {
 		if (len > bufsize) {
-			ISTGT_ERRLOG("bufsize(%d) too small\n", bufsize);
+			ISTGT_ERRLOG("bufsize(%zd) too small\n", bufsize);
 			return -1;
 		}
 		rc = istgt_iscsi_transfer_out(conn, lu_cmd, buf, bufsize, len);
@@ -2176,8 +2201,8 @@ istgt_lu_disk_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf
 static int
 istgt_lu_disk_scsi_mode_select_page(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, int pf, int sp, uint8_t *data, size_t len)
 {
+	size_t hlen, plen;
 	int ps, spf, page, subpage;
-	int hlen, plen;
 	int rc;
 
 	if (pf == 0) {
@@ -2271,6 +2296,72 @@ istgt_lu_disk_scsi_mode_select_page(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t 
 	return 0;
 }
 
+static int
+istgt_lu_disk_scsi_read_defect10(ISTGT_LU_DISK *spec __attribute__((__unused__)), CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int req_plist, int req_glist, int list_format, uint8_t *data, int alloc_len)
+{
+	uint8_t *cp;
+	int hlen = 0, len = 0;
+	int total;
+
+	if (alloc_len < 4) {
+		return -1;
+	}
+
+	data[0] = 0;				/* Reserved */
+	data[1] = 0;
+	if (req_plist) {
+		BDADD8(&data[1], 1, 4);		/* PLISTV */
+	}
+	if (req_glist) {
+		BDADD8(&data[1], 1, 3);		/* GLISTV */
+	}
+	BDADD8W(&data[1], list_format, 2, 3);	/* DEFECT LIST FORMAT */
+	DSET16(&data[2], 0);			/* DEFECT LIST LENGTH */
+	hlen = 4;
+
+	cp = &data[4];
+	/* defect list (if any) */
+	len = 0;
+
+	total = hlen + len;
+	DSET16(&data[2], total - hlen);		/* DEFECT LIST LENGTH */
+	return total;
+}
+
+static int
+istgt_lu_disk_scsi_read_defect12(ISTGT_LU_DISK *spec __attribute__((__unused__)), CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int req_plist, int req_glist, int list_format, uint8_t *data, int alloc_len)
+{
+	uint8_t *cp;
+	int hlen = 0, len = 0;
+	int total;
+
+	if (alloc_len < 8) {
+		return -1;
+	}
+
+	data[0] = 0;				/* Reserved */
+	data[1] = 0;
+	if (req_plist) {
+		BDADD8(&data[1], 1, 4);		/* PLISTV */
+	}
+	if (req_glist) {
+		BDADD8(&data[1], 1, 3);		/* GLISTV */
+	}
+	BDADD8W(&data[1], list_format, 2, 3);	/* DEFECT LIST FORMAT */
+	data[2] = 0;				/* Reserved */
+	data[3] = 0;				/* Reserved */
+	DSET32(&data[4], 0);			/* DEFECT LIST LENGTH */
+	hlen = 8;
+
+	cp = &data[8];
+	/* defect list (if any) */
+	len = 0;
+
+	total = hlen + len;
+	DSET32(&data[4], total - hlen);		/* DEFECT LIST LENGTH */
+	return total;
+}
+
 #if 0
 static int
 istgt_lu_disk_scsi_request_sense(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, int desc, uint8_t *data, int alloc_len)
@@ -2349,7 +2440,7 @@ istgt_lu_disk_scsi_request_sense(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cd
 #endif
 
 static int
-istgt_lu_disk_scsi_report_target_port_groups(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb, uint8_t *data, int alloc_len)
+istgt_lu_disk_scsi_report_target_port_groups(ISTGT_LU_DISK *spec, CONN_Ptr conn, uint8_t *cdb __attribute__((__unused__)), uint8_t *data, int alloc_len)
 {
 	ISTGT_Ptr istgt;
 	ISTGT_LU_Ptr lu;
@@ -2359,7 +2450,8 @@ istgt_lu_disk_scsi_report_target_port_groups(ISTGT_LU_DISK *spec, CONN_Ptr conn,
 	int total;
 	int pg_tag;
 	int nports;
-	int i, j;
+	int i, j, k;
+	int ridx;
 
 	if (alloc_len < 0xfff) {
 		return -1;
@@ -2436,19 +2528,27 @@ istgt_lu_disk_scsi_report_target_port_groups(ISTGT_LU_DISK *spec, CONN_Ptr conn,
 		len += plen;
 
 		nports = 0;
-		for (j = 0; j < istgt->nportal; j ++) {
-			if (istgt->portal[j].tag != pg_tag)
-				continue;
-			/* Target port descriptor(s) */
-			cp = &data[hlen + len];
-			/* Obsolete */
-			DSET16(&cp[0], 0);
-			/* RELATIVE TARGET PORT IDENTIFIER */
-			DSET16(&cp[2], (uint16_t) (1 + istgt->portal[j].idx));
-			plen = 4;
-			len += plen;
-			nports++;
+		ridx = 0;
+		MTX_LOCK(&istgt->mutex);
+		for (j = 0; j < istgt->nportal_group; j++) {
+			if (istgt->portal_group[j].tag == pg_tag) {
+				for (k = 0; k < istgt->portal_group[j].nportals; k++) {
+					/* Target port descriptor(s) */
+					cp = &data[hlen + len];
+					/* Obsolete */
+					DSET16(&cp[0], 0);
+					/* RELATIVE TARGET PORT IDENTIFIER */
+					DSET16(&cp[2], (uint16_t) (1 + ridx));
+					plen = 4;
+					len += plen;
+					nports++;
+					ridx++;
+				}
+			} else {
+				ridx += istgt->portal_group[j].nportals;
+			}
 		}
+		MTX_UNLOCK(&istgt->mutex);
 
 		if (nports > 0xff) {
 			ISTGT_ERRLOG("too many portals in portal group\n");
@@ -2611,7 +2711,7 @@ istgt_lu_disk_find_pr_key(ISTGT_LU_DISK *spec, const char *initiator_port, const
 }
 
 static int
-istgt_lu_disk_remove_other_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn, const char *initiator_port, const char *target_port, uint64_t key)
+istgt_lu_disk_remove_other_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused__)), const char *initiator_port, const char *target_port, uint64_t key)
 {
 	ISTGT_LU_PR_KEY *prkey, *prkey1, *prkey2;
 	int i, j;
@@ -2664,7 +2764,7 @@ istgt_lu_disk_remove_other_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn, const char
 }
 
 static int
-istgt_lu_disk_remove_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn, const char *initiator_port, const char *target_port, uint64_t key)
+istgt_lu_disk_remove_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused__)), const char *initiator_port, const char *target_port, uint64_t key)
 {
 	ISTGT_LU_PR_KEY *prkey, *prkey1, *prkey2;
 	int i, j;
@@ -2763,13 +2863,13 @@ istgt_lu_parse_transport_id(char **tid, uint8_t *data, int len)
 }
 
 static int
-istgt_lu_disk_scsi_persistent_reserve_in(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, int sa, uint8_t *data, int alloc_len)
+istgt_lu_disk_scsi_persistent_reserve_in(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, int sa, uint8_t *data, int alloc_len __attribute__((__unused__)))
 {
 	ISTGT_LU_PR_KEY *prkey;
+	size_t hlen = 0, len = 0, plen;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	uint8_t *cp;
-	int hlen = 0, len = 0, plen;
 	int total;
 	int i;
 
@@ -2925,7 +3025,7 @@ istgt_lu_disk_scsi_persistent_reserve_out(ISTGT_LU_DISK *spec, CONN_Ptr conn, IS
 {
 	ISTGT_LU_PR_KEY *prkey;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	char *old_rsv_port = NULL;
 	char **initiator_ports;
 	int maxports, nports;
@@ -2998,7 +3098,7 @@ istgt_lu_disk_scsi_persistent_reserve_out(ISTGT_LU_DISK *spec, CONN_Ptr conn, IS
 			}
 			/* remove existing keys */
 			rc = istgt_lu_disk_remove_pr_key(spec, conn,
-			    conn->initiator_port, conn->target_port, rkey);
+			    conn->initiator_port, conn->target_port, 0);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_disk_remove_pr_key() failed\n");
 				/* INTERNAL TARGET FAILURE */
@@ -3461,6 +3561,11 @@ istgt_lu_disk_scsi_persistent_reserve_out(ISTGT_LU_DISK *spec, CONN_Ptr conn, IS
 					return -1;
 				}
 			}
+			/* unregister? */
+			if (sarkey == 0) {
+				lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
+				return 0;
+			}
 		} else {
 			/* registered port */
 			if (spec_i_pt) {
@@ -3735,7 +3840,7 @@ istgt_lu_disk_scsi_release(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 {
 	ISTGT_LU_CMD lu_cmd2;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	uint64_t LUI;
 	uint64_t rkey;
 	uint8_t cdb[10];
@@ -3822,7 +3927,7 @@ istgt_lu_disk_scsi_reserve(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 {
 	ISTGT_LU_CMD lu_cmd2;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	uint64_t LUI;
 	uint64_t rkey;
 	uint8_t cdb[10];
@@ -3905,7 +4010,7 @@ istgt_lu_disk_scsi_reserve(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 }
 
 static int
-istgt_lu_disk_lbread(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lba, uint32_t len)
+istgt_lu_disk_lbread(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lba, uint32_t len)
 {
 	uint8_t *data;
 	uint64_t maxlba;
@@ -3937,19 +4042,19 @@ istgt_lu_disk_lbread(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("nbytes(%u) > iobufsize(%u)\n",
-		    nbytes, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("nbytes(%zu) > iobufsize(%zu)\n",
+		    (size_t) nbytes, lu_cmd->iobufsize);
 		return -1;
 	}
 	data = lu_cmd->iobuf;
 
-	rc = istgt_lu_disk_seek(spec, offset);
+	rc = spec->seek(spec, offset);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_disk_seek() failed\n");
 		return -1;
 	}
 
-	rc = istgt_lu_disk_read(spec, data, nbytes);
+	rc = spec->read(spec, data, nbytes);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_disk_read() failed\n");
 		return -1;
@@ -3995,8 +4100,8 @@ istgt_lu_disk_lbwrite(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cm
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("nbytes(%u) > iobufsize(%u)\n",
-		    nbytes, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("nbytes(%zu) > iobufsize(%zu)\n",
+		    (size_t) nbytes, lu_cmd->iobufsize);
 		return -1;
 	}
 	data = lu_cmd->iobuf;
@@ -4014,14 +4119,14 @@ istgt_lu_disk_lbwrite(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cm
 	}
 
 	spec->req_write_cache = 0;
-	rc = istgt_lu_disk_seek(spec, offset);
+	rc = spec->seek(spec, offset);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_disk_seek() failed\n");
 		return -1;
 	}
 
-	rc = istgt_lu_disk_write(spec, data, nbytes);
-	if (rc < 0 || rc != nbytes) {
+	rc = spec->write(spec, data, nbytes);
+	if (rc < 0 || (uint64_t) rc != nbytes) {
 		ISTGT_ERRLOG("lu_disk_write() failed\n");
 		return -1;
 	}
@@ -4069,8 +4174,8 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("nbytes(%u) > iobufsize(%u)\n",
-		    nbytes, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("nbytes(%zu) > iobufsize(%zu)\n",
+		    (size_t) nbytes, lu_cmd->iobufsize);
 		return -1;
 	}
 	data = lu_cmd->iobuf;
@@ -4098,7 +4203,7 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 	}
 
 	spec->req_write_cache = 0;
-	rc = istgt_lu_disk_seek(spec, offset);
+	rc = spec->seek(spec, offset);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_disk_seek() failed\n");
 		return -1;
@@ -4107,7 +4212,7 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 #if 0
 	nblocks = 0;
 	while (nblocks < llen) {
-		rc = istgt_lu_disk_write(spec, data, nbytes);
+		rc = spec->write(spec, data, nbytes);
 		if (rc < 0 || rc != nbytes) {
 			ISTGT_ERRLOG("lu_disk_write() failed\n");
 			return -1;
@@ -4124,8 +4229,8 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 	nblocks = 0;
 	while (nblocks < llen) {
 		uint64_t reqblocks = DMIN64(wblocks, (llen - nblocks));
-		rc = istgt_lu_disk_write(spec, conn->workbuf, (reqblocks * nbytes));
-		if (rc < 0 || rc != (reqblocks * nbytes)) {
+		rc = spec->write(spec, conn->workbuf, (reqblocks * nbytes));
+		if (rc < 0 || (uint64_t) rc != (reqblocks * nbytes)) {
 			ISTGT_ERRLOG("lu_disk_write() failed\n");
 			return -1;
 		}
@@ -4143,7 +4248,6 @@ istgt_lu_disk_lbwrite_same(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 static int
 istgt_lu_disk_lbwrite_ats(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lba, uint32_t len)
 {
-	uint8_t *tmp;
 	uint8_t *data;
 	uint64_t maxlba;
 	uint64_t llen;
@@ -4152,7 +4256,7 @@ istgt_lu_disk_lbwrite_ats(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr l
 	uint64_t nbytes;
 	int64_t rc;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 
 	if (len == 0) {
 		lu_cmd->data_len = 0;
@@ -4179,8 +4283,8 @@ istgt_lu_disk_lbwrite_ats(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr l
 	}
 
 	if (nbytes > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("nbytes(%u) > iobufsize(%u)\n",
-		    nbytes, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("nbytes(%zu) > iobufsize(%zu)\n",
+		    (size_t) nbytes, lu_cmd->iobufsize);
 		return -1;
 	}
 	data = lu_cmd->iobuf;
@@ -4197,53 +4301,57 @@ istgt_lu_disk_lbwrite_ats(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr l
 		return -1;
 	}
 
-	tmp = xmalloc(nbytes);
+	if (spec->watsbuf == NULL) {
+		spec->watssize = ISTGT_LU_WORK_ATS_BLOCK_SIZE;
+		spec->watsbuf = xmalloc(spec->watssize);
+	}
+	if (nbytes > (uint64_t) spec->watssize) {
+		ISTGT_ERRLOG("nbytes(%zu) > watssize(%zu)\n",
+		    (size_t) nbytes, (size_t) spec->watssize);
+		return -1;
+	}
+
 	spec->req_write_cache = 0;
 	/* start atomic test and set */
 	MTX_LOCK(&spec->ats_mutex);
 
-	rc = istgt_lu_disk_seek(spec, offset);
+	rc = spec->seek(spec, offset);
 	if (rc < 0) {
 		MTX_UNLOCK(&spec->ats_mutex);
 		ISTGT_ERRLOG("lu_disk_seek() failed\n");
-		xfree(tmp);
 		return -1;
 	}
 
-	rc = istgt_lu_disk_read(spec, tmp, nbytes);
-	if (rc < 0 || rc != nbytes) {
+	rc = spec->read(spec, spec->watsbuf, nbytes);
+	if (rc < 0 || (uint64_t) rc != nbytes) {
 		MTX_UNLOCK(&spec->ats_mutex);
 		ISTGT_ERRLOG("lu_disk_read() failed\n");
-		xfree(tmp);
 		return -1;
 	}
 
 #if 0
 	ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "ATS VERIFY", data, nbytes);
 	ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "ATS WRITE", data + nbytes, nbytes);
-	ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "ATS DATA", tmp, nbytes);
+	ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "ATS DATA", spec->watsbuf, nbytes);
 #endif
-	if (memcmp(tmp, data, nbytes) != 0) {
+	if (memcmp(spec->watsbuf, data, nbytes) != 0) {
 		MTX_UNLOCK(&spec->ats_mutex);
 		//ISTGT_ERRLOG("compare failed\n");
-		xfree(tmp);
 		/* MISCOMPARE DURING VERIFY OPERATION */
 		BUILD_SENSE(MISCOMPARE, 0x1d, 0x00);
 		return -1;
 	}
 
-	rc = istgt_lu_disk_seek(spec, offset);
+	rc = spec->seek(spec, offset);
 	if (rc < 0) {
 		MTX_UNLOCK(&spec->ats_mutex);
 		ISTGT_ERRLOG("lu_disk_seek() failed\n");
-		xfree(tmp);
 		return -1;
 	}
-	rc = istgt_lu_disk_write(spec, data + nbytes, nbytes);
-	if (rc < 0 || rc != nbytes) {
+	rc = spec->write(spec, data + nbytes, nbytes);
+	if (rc < 0 || (uint64_t) rc != nbytes) {
 		MTX_UNLOCK(&spec->ats_mutex);
 		ISTGT_ERRLOG("lu_disk_write() failed\n");
-		xfree(tmp);
 		return -1;
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "Wrote %"PRId64"/%"PRIu64" bytes\n",
@@ -4251,7 +4359,6 @@ istgt_lu_disk_lbwrite_ats(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr l
 
 	MTX_UNLOCK(&spec->ats_mutex);
 	/* end atomic test and set */
-	xfree(tmp);
 
 	lu_cmd->data_len = nbytes * 2;
 
@@ -4259,7 +4366,7 @@ istgt_lu_disk_lbwrite_ats(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr l
 }
 
 static int
-istgt_lu_disk_lbsync(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lba, uint32_t len)
+istgt_lu_disk_lbsync(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd __attribute__((__unused__)), uint64_t lba, uint32_t len)
 {
 	uint64_t maxlba;
 	uint64_t llen;
@@ -4287,7 +4394,7 @@ istgt_lu_disk_lbsync(ISTGT_LU_DISK *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 		return -1;
 	}
 
-	rc = istgt_lu_disk_sync(spec, offset, nbytes);
+	rc = spec->sync(spec, offset, nbytes);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_disk_sync() failed\n");
 		return -1;
@@ -4354,7 +4461,7 @@ istgt_lu_scsi_build_sense_data(uint8_t *data, int sk, int asc, int ascq)
 }
 
 static int
-istgt_lu_disk_build_sense_data(ISTGT_LU_DISK *spec, uint8_t *data, int sk, int asc, int ascq)
+istgt_lu_disk_build_sense_data(ISTGT_LU_DISK *spec __attribute__((__unused__)), uint8_t *data, int sk, int asc, int ascq)
 {
 	int rc;
 
@@ -4423,7 +4530,7 @@ istgt_lu_scsi_build_sense_data2(uint8_t *data, int sk, int asc, int ascq)
 }
 
 static int
-istgt_lu_disk_build_sense_data2(ISTGT_LU_DISK *spec, uint8_t *data, int sk, int asc, int ascq)
+istgt_lu_disk_build_sense_data2(ISTGT_LU_DISK *spec __attribute__((__unused__)), uint8_t *data, int sk, int asc, int ascq)
 {
 	int rc;
 
@@ -4472,21 +4579,21 @@ istgt_lu_disk_reset(ISTGT_LU_Ptr lu, int lun)
 
 	/* re-open file */
 	if (!spec->lu->readonly) {
-		rc = istgt_lu_disk_sync(spec, 0, spec->size);
+		rc = spec->sync(spec, 0, spec->size);
 		if (rc < 0) {
 			ISTGT_ERRLOG("LU%d: LUN%d: lu_disk_sync() failed\n",
 			    lu->num, lun);
 			/* ignore error */
 		}
 	}
-	rc = istgt_lu_disk_close(spec);
+	rc = spec->close(spec);
 	if (rc < 0) {
 		ISTGT_ERRLOG("LU%d: LUN%d: lu_disk_close() failed\n",
 		    lu->num, lun);
 		/* ignore error */
 	}
 	flags = lu->readonly ? O_RDONLY : O_RDWR;
-	rc = istgt_lu_disk_open(spec, flags, 0666);
+	rc = spec->open(spec, flags, 0666);
 	if (rc < 0) {
 		ISTGT_ERRLOG("LU%d: LUN%d: lu_disk_open() failed\n",
 		    lu->num, lun);
@@ -4526,10 +4633,10 @@ istgt_lu_disk_queue_clear_internal(ISTGT_LU_DISK *spec, const char *initiator_po
 		if (((all_cmds != 0) || (lu_task->lu_cmd.CmdSN == CmdSN))
 		    && (strcasecmp(lu_task->initiator_port,
 			    initiator_port) == 0)) {
-			ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%u cleared\n",
+			ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%lu cleared\n",
 			    lu_task->lu_cmd.CmdSN,
 			    lu_task->lu_cmd.cdb[0],
-			    (now - lu_task->create_time));
+			    (unsigned long) (now - lu_task->create_time));
 			rc = istgt_lu_destroy_task(lu_task);
 			if (rc < 0) {
 				MTX_UNLOCK(&spec->cmd_queue_mutex);
@@ -4568,10 +4675,10 @@ istgt_lu_disk_queue_clear_internal(ISTGT_LU_DISK *spec, const char *initiator_po
 			/* conn had gone? */
 			rc = pthread_mutex_trylock(&lu_task->trans_mutex);
 			if (rc == 0) {
-				ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%u aborted\n",
+				ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%lu aborted\n",
 				    lu_task->lu_cmd.CmdSN,
 				    lu_task->lu_cmd.cdb[0],
-				    (now - lu_task->create_time));
+				    (unsigned long) (now - lu_task->create_time));
 				/* force error */
 				lu_task->error = 1;
 				lu_task->abort = 1;
@@ -4723,10 +4830,10 @@ istgt_lu_disk_queue_clear_all(ISTGT_LU_Ptr lu, int lun)
 		lu_task = istgt_queue_dequeue(&spec->cmd_queue);
 		if (lu_task == NULL)
 			break;
-		ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%u cleared\n",
+		ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%lu cleared\n",
 		    lu_task->lu_cmd.CmdSN,
 		    lu_task->lu_cmd.cdb[0],
-		    (now - lu_task->create_time));
+		    (unsigned long) (now - lu_task->create_time));
 		rc = istgt_lu_destroy_task(lu_task);
 		if (rc < 0) {
 			MTX_UNLOCK(&spec->cmd_queue_mutex);
@@ -4743,10 +4850,10 @@ istgt_lu_disk_queue_clear_all(ISTGT_LU_Ptr lu, int lun)
 		/* conn had gone? */
 		rc = pthread_mutex_trylock(&lu_task->trans_mutex);
 		if (rc == 0) {
-			ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%u aborted\n",
+			ISTGT_LOG("CmdSN(%u), OP=0x%x, ElapsedTime=%lu aborted\n",
 			    lu_task->lu_cmd.CmdSN,
 			    lu_task->lu_cmd.cdb[0],
-			    (now - lu_task->create_time));
+			    (unsigned long) (now - lu_task->create_time));
 			/* force error */
 			lu_task->error = 1;
 			lu_task->abort = 1;
@@ -4782,7 +4889,7 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	int data_len;
 	int data_alloc_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	int lun_i;
 	int maxq;
 	int qcnt;
@@ -4811,7 +4918,7 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 #endif /* ISTGT_TRACE_DISK */
 		if (cdb[0] == SPC_INQUIRY) {
 			allocation_len = DGET16(&cdb[3]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -4825,7 +4932,7 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			memset(&data[1], 0, data_len - 1);
 			/* ADDITIONAL LENGTH */
 			data[4] = data_len - 5;
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			return ISTGT_LU_TASK_RESULT_IMMEDIATE;
 		} else {
@@ -4856,14 +4963,12 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 		return -1;
 	}
 
-	MTX_LOCK(&lu->queue_mutex);
 	/* enqueue SCSI command */
 	MTX_LOCK(&spec->cmd_queue_mutex);
 	rc = istgt_queue_count(&spec->cmd_queue);
 	maxq = spec->queue_depth * lu->istgt->MaxSessions;
 	if (rc > maxq) {
 		MTX_UNLOCK(&spec->cmd_queue_mutex);
-		MTX_UNLOCK(&lu->queue_mutex);
 		lu_cmd->data_len = 0;
 		lu_cmd->status = ISTGT_SCSI_STATUS_TASK_SET_FULL;
 		rc = istgt_lu_destroy_task(lu_task);
@@ -4907,7 +5012,6 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 	MTX_UNLOCK(&spec->cmd_queue_mutex);
 	if (rc < 0) {
-		MTX_UNLOCK(&lu->queue_mutex);
 		ISTGT_ERRLOG("queue_enqueue() failed\n");
 	error_return:
 		rc = istgt_lu_destroy_task(lu_task);
@@ -4919,6 +5023,8 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	/* notify LUN thread */
+	MTX_LOCK(&lu->queue_mutex);
+	lu->queue_check = 1;
 	rc = pthread_cond_broadcast(&lu->queue_cond);
 	MTX_UNLOCK(&lu->queue_mutex);
 	if (rc != 0) {
@@ -4989,7 +5095,7 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 	CONN_Ptr conn;
 	ISTGT_LU_CMD_Ptr lu_cmd;
 	struct timespec abstime;
-	time_t now;
+	time_t start, now;
 	uint8_t *iobuf;
 	char tmp[1];
 	int abort_task = 0;
@@ -5143,7 +5249,6 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 			abstime.tv_sec = 0;
 			abstime.tv_nsec = 0;
 
-			MTX_LOCK(&lu_task->trans_mutex);
 			MTX_LOCK(&conn->task_queue_mutex);
 			rc = istgt_queue_enqueue(&conn->task_queue, lu_task);
 			MTX_UNLOCK(&conn->task_queue_mutex);
@@ -5159,15 +5264,17 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 				goto error_return;
 			}
 
-			now = time(NULL);
+			start = now = time(NULL);
 			abstime.tv_sec = now + (lu_task->condwait / 1000);
 			abstime.tv_nsec = (lu_task->condwait % 1000) * 1000000;
 #if 0
 			ISTGT_LOG("wait CmdSN=%u\n", lu_task->lu_cmd.CmdSN);
 #endif
+			MTX_LOCK(&lu_task->trans_mutex);
 			MTX_LOCK(&spec->wait_lu_task_mutex);
 			spec->wait_lu_task = lu_task;
 			MTX_UNLOCK(&spec->wait_lu_task_mutex);
+			rc = 0;
 			while (lu_task->req_transfer_out == 1) {
 				rc = pthread_cond_timedwait(&lu_task->trans_cond,
 				    &lu_task->trans_mutex,
@@ -5179,8 +5286,11 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 						spec->wait_lu_task = NULL;
 						MTX_UNLOCK(&spec->wait_lu_task_mutex);
 						MTX_UNLOCK(&lu_task->trans_mutex);
-						ISTGT_ERRLOG("timeout trans_cond CmdSN=%u\n",
-						    lu_task->lu_cmd.CmdSN);
+						now = time(NULL);
+						ISTGT_ERRLOG("timeout trans_cond CmdSN=%u "
+						    "(time=%d)\n",
+						    lu_task->lu_cmd.CmdSN,
+						    (int)difftime(now, start));
 						/* timeout */
 						return -1;
 					}
@@ -5215,8 +5325,9 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 				}
 				if (rc == ETIMEDOUT) {
 					lu_task->error = 1;
-					ISTGT_ERRLOG("timeout trans_cond CmdSN=%u\n",
-					    lu_task->lu_cmd.CmdSN);
+					now = time(NULL);
+					ISTGT_ERRLOG("timeout trans_cond CmdSN=%u (time=%d)\n",
+					    lu_task->lu_cmd.CmdSN, (int)difftime(now, start));
 					return -1;
 				}
 				lu_task->error = 1;
@@ -5359,7 +5470,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	uint32_t transfer_len;
 	uint32_t parameter_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	int lun_i;
 	int rc;
 
@@ -5386,7 +5497,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 #endif /* ISTGT_TRACE_DISK */
 		if (cdb[0] == SPC_INQUIRY) {
 			allocation_len = DGET16(&cdb[3]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -5400,7 +5511,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			memset(&data[1], 0, data_len - 1);
 			/* ADDITIONAL LENGTH */
 			data[4] = data_len - 5;
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			return 0;
 		} else {
@@ -5478,7 +5589,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			return -1;
 		}
 		allocation_len = DGET16(&cdb[3]);
-		if (allocation_len > data_alloc_len) {
+		if (allocation_len > (size_t) data_alloc_len) {
 			ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 			    data_alloc_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -5492,7 +5603,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			break;
 		}
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "INQUIRY", data, data_len);
-		lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+		lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 		lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		break;
 
@@ -5510,9 +5621,9 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "sel=%x\n", sel);
 
 			allocation_len = DGET32(&cdb[6]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -5530,7 +5641,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				break;
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "REPORT LUNS", data, data_len);
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		}
 		break;
@@ -5597,7 +5708,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				return -1;
 			}
 			allocation_len = DGET32(&cdb[10]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -5609,7 +5720,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			data[12] = 0;                   /* RTO_EN(1) PROT_EN(0) */
 			memset(&data[13], 0, 32 - (8 + 4 + 1));     /* Reserved */
 			data_len = 32;
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		case SBC_SAI_READ_LONG_16:
@@ -5783,7 +5894,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			subpage = cdb[3];
 
 			allocation_len = cdb[4];
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -5793,13 +5904,15 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			data_len = istgt_lu_disk_scsi_mode_sense6(spec, conn, cdb, dbd, pc, page, subpage, data, data_alloc_len);
 			if (data_len < 0) {
+				/* INVALID FIELD IN CDB */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x24, 0x00);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 #if 0
 			istgt_dump("MODE SENSE(6)", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -5833,7 +5946,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			subpage = cdb[3];
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -5843,25 +5956,25 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			data_len = istgt_lu_disk_scsi_mode_sense10(spec, conn, cdb, llbaa, dbd, pc, page, subpage, data, data_alloc_len);
 			if (data_len < 0) {
+				/* INVALID FIELD IN CDB */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x24, 0x00);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 #if 0
 			istgt_dump("MODE SENSE(10)", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
 
-#if 0
 	case SPC_LOG_SELECT:
 	case SPC_LOG_SENSE:
 		/* INVALID COMMAND OPERATION CODE */
 		BUILD_SENSE(ILLEGAL_REQUEST, 0x20, 0x00);
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		break;
-#endif
 
 	case SPC_REQUEST_SENSE:
 		{
@@ -5883,7 +5996,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 
 			allocation_len = cdb[4];
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -5913,7 +6026,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 #if 0
 			istgt_dump("REQUEST SENSE", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -6416,7 +6529,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			transfer_len = (uint32_t) DGET8(&cdb[13]);
 			group_no = BGET8W(&cdb[14], 4, 5);
 
-			maxlen = ISTGT_LU_WORK_BLOCK_SIZE / spec->blocklen;
+			maxlen = ISTGT_LU_WORK_ATS_BLOCK_SIZE / spec->blocklen;
 			if (maxlen > 0xff) {
 				maxlen = 0xff;
 			}
@@ -6509,6 +6622,74 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			break;
 		}
 
+	case SBC_READ_DEFECT_DATA_10:
+		{
+			int req_plist, req_glist, list_format;
+
+			if (lu_cmd->R_bit == 0) {
+				ISTGT_ERRLOG("R_bit == 0\n");
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				return -1;
+			}
+
+			req_plist = BGET8(&cdb[2], 4);
+			req_glist = BGET8(&cdb[2], 3);
+			list_format = BGET8W(&cdb[2], 2, 3);
+
+			allocation_len = (uint32_t) DGET16(&cdb[7]);
+			if (allocation_len > (size_t) data_alloc_len) {
+				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
+				    data_alloc_len);
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				return -1;
+			}
+			memset(data, 0, allocation_len);
+
+			data_len = istgt_lu_disk_scsi_read_defect10(spec, conn, cdb,
+			    req_plist, req_glist, list_format, data, data_alloc_len);
+			if (data_len < 0) {
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				break;
+			}
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
+			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
+			break;
+		}
+
+	case SBC_READ_DEFECT_DATA_12:
+		{
+			int req_plist, req_glist, list_format;
+
+			if (lu_cmd->R_bit == 0) {
+				ISTGT_ERRLOG("R_bit == 0\n");
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				return -1;
+			}
+
+			req_plist = BGET8(&cdb[2], 4);
+			req_glist = BGET8(&cdb[2], 3);
+			list_format = BGET8W(&cdb[2], 2, 3);
+
+			allocation_len = DGET32(&cdb[6]);
+			if (allocation_len > (size_t) data_alloc_len) {
+				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
+				    data_alloc_len);
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				return -1;
+			}
+			memset(data, 0, allocation_len);
+
+			data_len = istgt_lu_disk_scsi_read_defect12(spec, conn, cdb,
+			    req_plist, req_glist, list_format, data, data_alloc_len);
+			if (data_len < 0) {
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				break;
+			}
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
+			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
+			break;
+		}
+
 	case SCC_MAINTENANCE_IN:
 		ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "MAINTENANCE_IN\n");
 		switch (BGET8W(&cdb[1], 4, 5)) { /* SERVICE ACTION */
@@ -6520,7 +6701,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				return -1;
 			}
 			allocation_len = DGET32(&cdb[6]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -6534,7 +6715,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG,
 			    "REPORT_TARGET_PORT_GROUPS", data, data_len);
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		default:
@@ -6623,7 +6804,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			sa = BGET8W(&cdb[1], 4, 5);
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -6638,7 +6819,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG,
 			    "PERSISTENT_RESERVE_IN", data, data_len);
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		}
 		break;
@@ -6690,6 +6871,12 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 		break;
 
 	/* XXX TODO: fix */
+	case 0x85: /* ATA PASS-THROUGH(16) */
+	case 0xA1: /* ATA PASS-THROUGH(12) */
+		/* INVALID COMMAND OPERATION CODE */
+		BUILD_SENSE(ILLEGAL_REQUEST, 0x20, 0x00);
+		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+		break;
 	case SPC_EXTENDED_COPY:
 		/* INVALID COMMAND OPERATION CODE */
 		BUILD_SENSE(ILLEGAL_REQUEST, 0x20, 0x00);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -44,6 +44,8 @@
 static void istgt_free_all_cf_section(CF_SECTION *sp);
 static void istgt_free_all_cf_item(CF_ITEM *ip);
 static void istgt_free_all_cf_value(CF_VALUE *vp);
+static void istgt_append_cf_item(CF_SECTION *sp, CF_ITEM *ip);
+static void istgt_append_cf_value(CF_ITEM *ip, CF_VALUE *vp);
 
 CONFIG *
 istgt_allocate_config(void)
@@ -182,6 +184,34 @@ istgt_free_all_cf_value(CF_VALUE *vp)
 		next = vp->next;
 		istgt_free_cf_value(vp);
 		vp = next;
+	}
+}
+
+void
+istgt_copy_cf_item(CF_SECTION *sp_dst, CF_SECTION *sp_src)
+{
+	CF_ITEM *ip, *ip_old;
+	CF_VALUE *vp, *vp_old;
+
+	istgt_free_all_cf_item(sp_dst->item);
+	sp_dst->item = NULL;
+
+	ip_old = sp_src->item;
+	while (ip_old != NULL) {
+		ip = istgt_allocate_cf_item();
+		istgt_append_cf_item(sp_dst, ip);
+		ip->key = xstrdup(ip_old->key);
+		ip->val = NULL;
+
+		vp_old = ip_old->val;
+		while (vp_old != NULL) {
+			vp = istgt_allocate_cf_value();
+			istgt_append_cf_value(ip, vp);
+			vp->value = xstrdup(vp_old->value);
+
+			vp_old = vp_old->next;
+		}
+		ip_old = ip_old->next;
 	}
 }
 

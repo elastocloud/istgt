@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,6 +46,7 @@ istgt_queue_init(ISTGT_QUEUE_Ptr head)
 	head->prev = NULL;
 	head->next = NULL;
 	head->elem = NULL;
+	head->num = 0;
 	return 0;
 }
 
@@ -68,6 +69,7 @@ istgt_queue_destroy(ISTGT_QUEUE_Ptr head)
 int
 istgt_queue_count(ISTGT_QUEUE_Ptr head)
 {
+#if 0
 	ISTGT_QUEUE_Ptr qp;
 	int num;
 
@@ -78,6 +80,11 @@ istgt_queue_count(ISTGT_QUEUE_Ptr head)
 		num++;
 	}
 	return num;
+#else
+	if (head == NULL)
+		return 0;
+	return head->num;
+#endif
 }
 
 int
@@ -105,6 +112,7 @@ istgt_queue_enqueue(ISTGT_QUEUE_Ptr head, void *elem)
 		qp->next = head;
 		qp->prev = tail;
 	}
+	head->num++;
 	return 0;
 }
 
@@ -132,6 +140,7 @@ istgt_queue_dequeue(ISTGT_QUEUE_Ptr head)
 			next->prev = head;
 		}
 	}
+	head->num--;
 	return elem;
 }
 
@@ -160,5 +169,6 @@ istgt_queue_enqueue_first(ISTGT_QUEUE_Ptr head, void *elem)
 		qp->next = first;
 		qp->prev = head;
 	}
+	head->num++;
 	return 0;
 }

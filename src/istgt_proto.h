@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -54,9 +54,20 @@
 #include "istgt_iscsi.h"
 #include "istgt_lu.h"
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+#if defined(__GNUC__) && defined(__GNUC_MINOR__)
+#define ISTGT_GNUC_PREREQ(ma,mi) \
+	(__GNUC__ > (ma) || (__GNUC__ == (ma) && __GNUC_MINOR__ >= (mi)))
+#else
+#define ISTGT_GNUC_PREREQ(ma,mi) 0
+#endif
+
 /* istgt_iscsi.c */
 int istgt_chap_get_authinfo(ISTGT_CHAP_AUTH *auth, const char *authfile, const char *authuser, int ag_tag);
-int istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, int alloc_len, int transfer_len);
+int istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, size_t alloc_len, size_t transfer_len);
 int istgt_create_sess(ISTGT_Ptr istgt, CONN_Ptr conn, ISTGT_LU_Ptr lu);
 int istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr *sa, socklen_t salen);
 void istgt_lock_gconns(void);
@@ -64,6 +75,7 @@ void istgt_unlock_gconns(void);
 int istgt_get_gnconns(void);
 CONN_Ptr istgt_get_gconn(int idx);
 int istgt_get_active_conns(void);
+int istgt_stop_conns(void);
 CONN_Ptr istgt_find_conn(const char *initiator_port, const char *target_name, uint16_t tsih);
 int istgt_iscsi_init(ISTGT_Ptr istgt);
 int istgt_iscsi_shutdown(ISTGT_Ptr istgt);
@@ -83,9 +95,11 @@ uint64_t istgt_lu_get_filesize(const char *file);
 uint64_t istgt_lu_parse_size(const char *size);
 int istgt_lu_parse_media_flags(const char *flags);
 uint64_t istgt_lu_parse_media_size(const char *file, const char *size, int *flags);
-PORTAL *istgt_lu_find_portalgroup(ISTGT_Ptr istgt, int tag);
+PORTAL_GROUP *istgt_lu_find_portalgroup(ISTGT_Ptr istgt, int tag);
 INITIATOR_GROUP *istgt_lu_find_initiatorgroup(ISTGT_Ptr istgt, int tag);
 int istgt_lu_init(ISTGT_Ptr istgt);
+int istgt_lu_reload_delete(ISTGT_Ptr istgt);
+int istgt_lu_reload_update(ISTGT_Ptr istgt);
 int istgt_lu_set_all_state(ISTGT_Ptr istgt, ISTGT_STATE state);
 int istgt_lu_create_threads(ISTGT_Ptr istgt);
 int istgt_lu_shutdown(ISTGT_Ptr istgt);
@@ -102,7 +116,8 @@ int istgt_lu_clear_all_task(ISTGT_LU_Ptr lu, uint64_t lun);
 
 /* istgt_lu_ctl.c */
 int istgt_create_uctl(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr *sa, socklen_t salen);
-int istgt_init_uctl(ISTGT_Ptr istgt);
+int istgt_uctl_init(ISTGT_Ptr istgt);
+int istgt_uctl_shutdown(ISTGT_Ptr istgt);
 
 /* istgt_lu_disk.c */
 struct istgt_lu_disk_t;
@@ -130,6 +145,10 @@ int istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd);
 int istgt_lu_disk_queue_count(ISTGT_LU_Ptr lu, int *lun);
 int istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun);
 void istgt_lu_disk_aio_done(siginfo_t *info);
+
+/* istgt_lu_disk_vbox.c */
+int istgt_lu_disk_vbox_lun_init(ISTGT_LU_DISK *spec, ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
+int istgt_lu_disk_vbox_lun_shutdown(ISTGT_LU_DISK *spec, ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
 
 /* istgt_lu_dvd.c */
 struct istgt_lu_dvd_t;
@@ -162,7 +181,7 @@ int istgt_lu_pass_reset(ISTGT_LU_Ptr lu, int lun);
 int istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd);
 
 #ifdef USE_ATOMIC
-static inline int
+static inline __attribute__((__always_inline__)) int
 istgt_lu_get_state(ISTGT_LU_Ptr lu)
 {
 	ISTGT_STATE state;
@@ -175,7 +194,7 @@ istgt_lu_get_state(ISTGT_LU_Ptr lu)
 #endif
 	return state;
 }
-static inline void
+static inline __attribute__((__always_inline__)) void
 istgt_lu_set_state(ISTGT_LU_Ptr lu, ISTGT_STATE state)
 {
 #if defined HAVE_ATOMIC_STORE_REL_INT
@@ -189,8 +208,29 @@ istgt_lu_set_state(ISTGT_LU_Ptr lu, ISTGT_STATE state)
 #error "no atomic operation"
 #endif
 }
-#else
-static inline int
+#elif defined (USE_GCC_ATOMIC)
+/* gcc >= 4.1 builtin functions */
+static inline __attribute__((__always_inline__)) int
+istgt_lu_get_state(ISTGT_LU_Ptr lu)
+{
+	ISTGT_STATE state;
+	state = __sync_fetch_and_add((unsigned int *)&lu->state, 0);
+	return state;
+}
+static inline __attribute__((__always_inline__)) void
+istgt_lu_set_state(ISTGT_LU_Ptr lu, ISTGT_STATE state)
+{
+	ISTGT_STATE state_old;
+	do {
+		state_old = __sync_fetch_and_add((unsigned int *)&lu->state, 0);
+	} while (__sync_val_compare_and_swap((unsigned int *)&lu->state,
+		state_old, state) != state_old);
+#if defined (HAVE_GCC_ATOMIC_SYNCHRONIZE)
+	__sync_synchronize();
+#endif
+}
+#else /* !USE_ATOMIC && !USE_GCC_ATOMIC */
+static inline __attribute__((__always_inline__)) int
 istgt_lu_get_state(ISTGT_LU_Ptr lu)
 {
 	ISTGT_STATE state;
@@ -200,7 +240,7 @@ istgt_lu_get_state(ISTGT_LU_Ptr lu)
 	return state;
 }
 
-static inline void
+static inline __attribute__((__always_inline__)) void
 istgt_lu_set_state(ISTGT_LU_Ptr lu, ISTGT_STATE state)
 {
 	MTX_LOCK(&lu->state_mutex);

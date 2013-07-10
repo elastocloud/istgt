@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,6 +53,11 @@
 #include "istgt_proto.h"
 #include "istgt_scsi.h"
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
 //#define ISTGT_TRACE_PASS
 
 #define ISTGT_LU_CAM_TIMEOUT 60000 /* 60sec. */
@@ -84,12 +89,12 @@ typedef struct istgt_lu_pass_t {
 	uint64_t ms_blockcnt;
 } ISTGT_LU_PASS;
 
-#define BUILD_SENSE(SK,ASC,ASCQ)										\
-	do {																\
-		*sense_len =													\
-			istgt_lu_pass_build_sense_data(spec, sense_data,			\
-										   ISTGT_SCSI_SENSE_ ## SK,		\
-										   (ASC), (ASCQ));				\
+#define BUILD_SENSE(SK,ASC,ASCQ)					\
+	do {								\
+		*sense_len =						\
+			istgt_lu_pass_build_sense_data(spec, sense_data, \
+			    ISTGT_SCSI_SENSE_ ## SK,			\
+			    (ASC), (ASCQ));				\
 	} while (0)
 
 static int istgt_lu_pass_build_sense_data(ISTGT_LU_PASS *spec, uint8_t *data, int sk, int asc, int ascq);
@@ -153,8 +158,8 @@ istgt_lu_pass_print_sense_key(uint8_t *sense_data)
 	istgt_lu_pass_parse_sense_key(sense_data, &sk, &asc, &ascq);
 	if (sk >= 0) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					   "SK=0x%x, ASC=0x%x, ASCQ=0x%x\n",
-					   sk, asc, ascq);
+		    "SK=0x%x, ASC=0x%x, ASCQ=0x%x\n",
+		    sk, asc, ascq);
 	}
 }
 
@@ -193,8 +198,8 @@ istgt_lu_pass_set_inquiry(ISTGT_LU_PASS *spec)
 	flags = CAM_DIR_IN;
 	flags |= CAM_DEV_QFRZDIS;
 	cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-				  data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
-				  spec->timeout);
+	    data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
+	    spec->timeout);
 	rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 	if (rc < 0) {
 		ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -203,12 +208,12 @@ istgt_lu_pass_set_inquiry(ISTGT_LU_PASS *spec)
 
 	if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					   "request error CAM=0x%x, SCSI=0x%x\n",
-					   spec->ccb->ccb_h.status,
-					   spec->ccb->csio.scsi_status);
+		    "request error CAM=0x%x, SCSI=0x%x\n",
+		    spec->ccb->ccb_h.status,
+		    spec->ccb->csio.scsi_status);
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-						(uint8_t *) &spec->ccb->csio.sense_data,
-						SSD_FULL_SIZE);
+		    (uint8_t *) &spec->ccb->csio.sense_data,
+		    SSD_FULL_SIZE);
 		istgt_lu_pass_print_sense_key((uint8_t *) &spec->ccb->csio.sense_data);
 		return -1;
 	}
@@ -272,8 +277,8 @@ istgt_lu_pass_set_modesense(ISTGT_LU_PASS *spec)
 	flags = CAM_DIR_IN;
 	flags |= CAM_DEV_QFRZDIS;
 	cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-				  data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
-				  spec->timeout);
+	    data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
+	    spec->timeout);
 	rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 	if (rc < 0) {
 		ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -282,15 +287,15 @@ istgt_lu_pass_set_modesense(ISTGT_LU_PASS *spec)
 
 	if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					   "request error CAM=0x%x, SCSI=0x%x\n",
-					   spec->ccb->ccb_h.status,
-					   spec->ccb->csio.scsi_status);
+		    "request error CAM=0x%x, SCSI=0x%x\n",
+		    spec->ccb->ccb_h.status,
+		    spec->ccb->csio.scsi_status);
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-						(uint8_t *) &spec->ccb->csio.sense_data,
-						SSD_FULL_SIZE);
+		    (uint8_t *) &spec->ccb->csio.sense_data,
+		    SSD_FULL_SIZE);
 		istgt_lu_pass_print_sense_key((uint8_t *) &spec->ccb->csio.sense_data);
 		istgt_lu_pass_parse_sense_key((uint8_t *) &spec->ccb->csio.sense_data,
-									  &sk, &asc, &ascq);
+		    &sk, &asc, &ascq);
 		if (sk == ISTGT_SCSI_SENSE_ILLEGAL_REQUEST) {
 			if (asc == 0x20 && ascq == 0x00) {
 				/* INVALID COMMAND OPERATION CODE */
@@ -379,8 +384,8 @@ istgt_lu_pass_set_modesense(ISTGT_LU_PASS *spec)
 		flags = CAM_DIR_IN;
 		flags |= CAM_DEV_QFRZDIS;
 		cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-					  data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
-					  spec->timeout);
+		    data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
+		    spec->timeout);
 		rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 		if (rc < 0) {
 			ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -389,15 +394,15 @@ istgt_lu_pass_set_modesense(ISTGT_LU_PASS *spec)
 
 		if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						   "request error CAM=0x%x, SCSI=0x%x\n",
-						   spec->ccb->ccb_h.status,
-						   spec->ccb->csio.scsi_status);
+			    "request error CAM=0x%x, SCSI=0x%x\n",
+			    spec->ccb->ccb_h.status,
+			    spec->ccb->csio.scsi_status);
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-							(uint8_t *) &spec->ccb->csio.sense_data,
-							SSD_FULL_SIZE);
+			    (uint8_t *) &spec->ccb->csio.sense_data,
+			    SSD_FULL_SIZE);
 			istgt_lu_pass_print_sense_key((uint8_t *) &spec->ccb->csio.sense_data);
 			istgt_lu_pass_parse_sense_key((uint8_t *) &spec->ccb->csio.sense_data,
-										  &sk, &asc, &ascq);
+			    &sk, &asc, &ascq);
 			if (sk == ISTGT_SCSI_SENSE_ILLEGAL_REQUEST) {
 				if (spec->inq_ver < SPC_VERSION_SPC3) {
 					//ISTGT_WARNLOG("MODE SENSE was not supported\n");
@@ -506,8 +511,8 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 	flags = CAM_DIR_IN;
 	flags |= CAM_DEV_QFRZDIS;
 	cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-				  data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
-				  spec->timeout);
+	    data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
+	    spec->timeout);
 	rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 	if (rc < 0) {
 		ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -516,15 +521,15 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 
 	if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					   "request error CAM=0x%x, SCSI=0x%x\n",
-					   spec->ccb->ccb_h.status,
-					   spec->ccb->csio.scsi_status);
+		    "request error CAM=0x%x, SCSI=0x%x\n",
+		    spec->ccb->ccb_h.status,
+		    spec->ccb->csio.scsi_status);
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-						(uint8_t *) &spec->ccb->csio.sense_data,
-						SSD_FULL_SIZE);
+		    (uint8_t *) &spec->ccb->csio.sense_data,
+		    SSD_FULL_SIZE);
 		istgt_lu_pass_print_sense_key((uint8_t *) &spec->ccb->csio.sense_data);
 		istgt_lu_pass_parse_sense_key((uint8_t *) &spec->ccb->csio.sense_data,
-									  &sk, &asc, &ascq);
+		    &sk, &asc, &ascq);
 		if (sk == ISTGT_SCSI_SENSE_NOT_READY) {
 			if (asc == 0x04 && ascq == 0x01) {
 				/* LOGICAL UNIT IS IN PROCESS OF BECOMING READY */
@@ -620,8 +625,8 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 		flags = CAM_DIR_IN;
 		flags |= CAM_DEV_QFRZDIS;
 		cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-					  data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
-					  spec->timeout);
+		    data, data_alloc_len, SSD_FULL_SIZE, cdb_len,
+		    spec->timeout);
 		rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 		if (rc < 0) {
 			ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -630,15 +635,15 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 
 		if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						   "request error CAM=0x%x, SCSI=0x%x\n",
-						   spec->ccb->ccb_h.status,
-						   spec->ccb->csio.scsi_status);
+			    "request error CAM=0x%x, SCSI=0x%x\n",
+			    spec->ccb->ccb_h.status,
+			    spec->ccb->csio.scsi_status);
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-							(uint8_t *) &spec->ccb->csio.sense_data,
-							SSD_FULL_SIZE);
+			    (uint8_t *) &spec->ccb->csio.sense_data,
+			    SSD_FULL_SIZE);
 			istgt_lu_pass_print_sense_key((uint8_t *) &spec->ccb->csio.sense_data);
 			istgt_lu_pass_parse_sense_key((uint8_t *) &spec->ccb->csio.sense_data,
-										  &sk, &asc, &ascq);
+			    &sk, &asc, &ascq);
 			if (sk == ISTGT_SCSI_SENSE_NOT_READY) {
 				if (asc == 0x04 && ascq == 0x01) {
 					/* LOGICAL UNIT IS IN PROCESS OF BECOMING READY */
@@ -705,7 +710,7 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 		}
 
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "READ CAPACITY(16)",
-						data, data_len);
+		    data, data_len);
 		spec->blockcnt = DGET64(&data[0]); // last LBA
 		spec->blocklen = (uint64_t) DGET32(&data[8]);
 	}
@@ -722,7 +727,7 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 }
 
 int
-istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_pass_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	char buf[MAX_TMPBUF];
 	ISTGT_LU_PASS *spec;
@@ -743,7 +748,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 	for (i = 0; i < lu->maxlun; i++) {
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 			lu->lun[i].spec = NULL;
 			continue;
 		}
@@ -752,7 +757,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			return -1;
 		}
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d device\n",
-					   lu->num, i);
+		    lu->num, i);
 
 		spec = xmalloc(sizeof *spec);
 		memset(spec, 0, sizeof *spec);
@@ -773,11 +778,11 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		spec->blockcnt = 0;
 
 		printf("LU%d: LUN%d file=%s\n",
-			   lu->num, i, spec->file);
+		    lu->num, i, spec->file);
 
 		flags = lu->readonly ? O_RDONLY : O_RDWR;
 		rc = cam_get_device(spec->file, buf, sizeof buf,
-							&spec->unit);
+		    &spec->unit);
 		if (rc < 0) {
 			ISTGT_ERRLOG("LU%d: LUN%d: cam_get_device() failed\n", lu->num, i);
 			xfree(spec);
@@ -785,7 +790,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		}
 		spec->device = xstrdup(buf);
 		spec->cam_dev = cam_open_spec_device(spec->device, spec->unit,
-											 flags, NULL);
+		    flags, NULL);
 		if (spec->cam_dev == NULL) {
 			ISTGT_ERRLOG("LU%d: LUN%d: cam_open() failed\n", lu->num, i);
 			xfree(spec->device);
@@ -806,7 +811,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		rc = istgt_lu_pass_set_inquiry(spec);
 		if (rc < 0) {
 			ISTGT_ERRLOG("LU%d: LUN%d: lu_pass_set_inquiry() failed\n",
-						 lu->num, i);
+			    lu->num, i);
 		error_return:
 			cam_freeccb(spec->ccb);
 			cam_close_spec_device(spec->cam_dev);
@@ -876,7 +881,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			break;
 		default:
 			ISTGT_ERRLOG("LU%d: LUN%d: unsupported version(%d)\n",
-						 lu->num, i, ver);
+			    lu->num, i, ver);
 			goto error_return;
 		}
 		switch (fmt) {
@@ -891,7 +896,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			break;
 		default:
 			ISTGT_ERRLOG("LU%d: LUN%d: unsupported format(%d)\n",
-						 lu->num, i, fmt);
+			    lu->num, i, fmt);
 			goto error_return;
 		}
 
@@ -905,7 +910,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			if (rc < 0) {
 #if 0
 				ISTGT_ERRLOG("LU%d: LUN%d: lu_pass_set_modesense() failed\n",
-							 lu->num, i);
+				    lu->num, i);
 				goto error_return;
 #else
 				spec->ms_blockcnt = 0;
@@ -926,7 +931,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			rc = istgt_lu_pass_set_capacity(spec);
 			if (rc < 0) {
 				ISTGT_ERRLOG("LU%d: LUN%d: lu_pass_set_capacity() failed\n",
-							 lu->num, i);
+				    lu->num, i);
 				goto error_return;
 			}
 		} else {
@@ -949,7 +954,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		if (pd != SPC_PERIPHERAL_DEVICE_TYPE_CHANGER) {
 			printf("LU%d: LUN%d block descriptor\n", lu->num, i);
 			printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
-				   lu->num, i, spec->ms_blockcnt, spec->ms_blocklen);
+			    lu->num, i, spec->ms_blockcnt, spec->ms_blocklen);
 
 			if (spec->inq_rmb && spec->blockcnt == 0) {
 				printf("LU%d: LUN%d medium not present\n", lu->num, i);
@@ -957,16 +962,16 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 				printf("LU%d: LUN%d medium capacity\n", lu->num, i);
 				printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
 					   lu->num, i, spec->blockcnt, spec->blocklen);
-
+				
 				gb_size = spec->size / ISTGT_LU_1GB;
 				mb_size = (spec->size % ISTGT_LU_1GB) / ISTGT_LU_1MB;
 				if (gb_size > 0) {
 					mb_digit = (int) (((mb_size * 100) / 1024) / 10);
 					printf("LU%d: LUN%d %"PRIu64".%dGB\n",
-						   lu->num, i, gb_size, mb_digit);
+					    lu->num, i, gb_size, mb_digit);
 				} else {
 					printf("LU%d: LUN%d %"PRIu64"MB\n",
-						   lu->num, i, mb_size);
+					    lu->num, i, mb_size);
 				}
 			}
 		}
@@ -982,7 +987,7 @@ istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 }
 
 int
-istgt_lu_pass_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_pass_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_PASS *spec;
 	int i;
@@ -994,7 +999,7 @@ istgt_lu_pass_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 	for (i = 0; i < lu->maxlun; i++) {
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 			continue;
 		}
 		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_DEVICE) {
@@ -1078,7 +1083,7 @@ istgt_lu_pass_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf
 	int rc;
 
 	if (len > bufsize) {
-		ISTGT_ERRLOG("bufsize(%d) too small\n", bufsize);
+		ISTGT_ERRLOG("bufsize(%zd) too small\n", bufsize);
 		return -1;
 	}
 	rc = istgt_iscsi_transfer_out(conn, lu_cmd, buf, bufsize, len);
@@ -1090,26 +1095,25 @@ istgt_lu_pass_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf
 }
 
 static int
-istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
+istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd)
 {
 	uint32_t flags;
 	uint8_t *cdb;
 	uint8_t *data;
 	int cdb_len;
 	int data_len;
-	int data_alloc_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
+	size_t len;
 	int R_bit, W_bit;
 	int transfer_len;
 	int retry = 1;
 	int sk, asc, ascq;
-	int len;
 	int rc;
 
 	cdb = lu_cmd->cdb;
 	data = lu_cmd->data;
-	data_alloc_len = lu_cmd->alloc_len;
+	//data_alloc_len = lu_cmd->alloc_len;
 	sense_data = lu_cmd->sense_data;
 	sense_len = &lu_cmd->sense_data_len;
 	*sense_len = 0;
@@ -1129,8 +1133,8 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 	}
 	flags |= CAM_DEV_QFRZDIS;
 	cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-				  data, transfer_len, SSD_FULL_SIZE, cdb_len,
-				  spec->timeout);
+	    data, transfer_len, SSD_FULL_SIZE, cdb_len,
+	    spec->timeout);
 	rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 	if (rc < 0) {
 		ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -1142,12 +1146,12 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 
 	if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					   "request error CAM=0x%x, SCSI=0x%x\n",
-					   spec->ccb->ccb_h.status,
-					   spec->ccb->csio.scsi_status);
+		    "request error CAM=0x%x, SCSI=0x%x\n",
+		    spec->ccb->ccb_h.status,
+		    spec->ccb->csio.scsi_status);
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-						(uint8_t *) &spec->ccb->csio.sense_data,
-						SSD_FULL_SIZE);
+		    (uint8_t *) &spec->ccb->csio.sense_data,
+		    SSD_FULL_SIZE);
 		if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK)
 			== CAM_SCSI_STATUS_ERROR) {
 			memcpy(sense_data + 2, &spec->ccb->csio.sense_data, SSD_FULL_SIZE);
@@ -1173,7 +1177,7 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 			}
 			istgt_lu_pass_print_sense_key(sense_data + 2);
 			istgt_lu_pass_parse_sense_key(sense_data + 2,
-										  &sk, &asc, &ascq);
+			    &sk, &asc, &ascq);
 		} else {
 #if 0
 			/* INTERNAL TARGET FAILURE */
@@ -1196,14 +1200,14 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 			}
 			istgt_lu_pass_print_sense_key(sense_data + 2);
 			istgt_lu_pass_parse_sense_key(sense_data + 2,
-										  &sk, &asc, &ascq);
+			    &sk, &asc, &ascq);
 		}
 		return -1;
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "dxfer=%d, resid=%d, sense=%d\n",
-				   spec->ccb->csio.dxfer_len,
-				   spec->ccb->csio.resid,
-				   spec->ccb->csio.sense_resid);
+	    spec->ccb->csio.dxfer_len,
+	    spec->ccb->csio.resid,
+	    spec->ccb->csio.sense_resid);
 	data_len = spec->ccb->csio.dxfer_len;
 	data_len -= spec->ccb->csio.resid;
 
@@ -1215,7 +1219,7 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "DOCAM", data, data_len);
 		}
 #endif
-		lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+		lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 	} else {
 		lu_cmd->data_len = 0;
 	}
@@ -1225,7 +1229,7 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd
 }
 
 static int
-istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
+istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd)
 {
 	uint64_t llba;
 	uint32_t lcnt;
@@ -1238,13 +1242,13 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 	int data_len;
 	int data_alloc_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
+	size_t len, cnt;
 	int R_bit, W_bit;
 	int transfer_len;
 	int retry = 1;
 	int offset;
 	int seglen;
-	int len, cnt;
 	int sk, asc, ascq;
 	int rc;
 
@@ -1386,8 +1390,8 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		}
 
 		cam_fill_csio(&spec->ccb->csio, retry, NULL, flags, MSG_SIMPLE_Q_TAG,
-					  data + offset, len, SSD_FULL_SIZE, cdb_len,
-					  spec->timeout);
+		    data + offset, len, SSD_FULL_SIZE, cdb_len,
+		    spec->timeout);
 		rc = cam_send_ccb(spec->cam_dev, spec->ccb);
 		if (rc < 0) {
 			ISTGT_ERRLOG("cam_send_ccb() failed\n");
@@ -1399,14 +1403,14 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 
 		if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK) != CAM_REQ_CMP) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						   "request error CAM=0x%x, SCSI=0x%x\n",
-						   spec->ccb->ccb_h.status,
-						   spec->ccb->csio.scsi_status);
+			    "request error CAM=0x%x, SCSI=0x%x\n",
+			    spec->ccb->ccb_h.status,
+			    spec->ccb->csio.scsi_status);
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "SENSE",
-							(uint8_t *) &spec->ccb->csio.sense_data,
-							SSD_FULL_SIZE);
+			    (uint8_t *) &spec->ccb->csio.sense_data,
+			    SSD_FULL_SIZE);
 			if ((spec->ccb->ccb_h.status & CAM_STATUS_MASK)
-				== CAM_SCSI_STATUS_ERROR) {
+			    == CAM_SCSI_STATUS_ERROR) {
 				memcpy(sense_data + 2, &spec->ccb->csio.sense_data, SSD_FULL_SIZE);
 				DSET16(&sense_data[0], SSD_FULL_SIZE);
 				*sense_len = SSD_FULL_SIZE + 2;
@@ -1420,7 +1424,7 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 #endif
 				/* adjust fixed format length */
 				if (BGET8W(&sense_data[2+0], 6, 7) == 0x70
-					|| BGET8W(&sense_data[2+0], 6, 7) == 0x71) {
+				    || BGET8W(&sense_data[2+0], 6, 7) == 0x71) {
 					len = DGET8(&sense_data[2+7]);
 					len += 8;
 					if (len < SSD_FULL_SIZE) {
@@ -1430,7 +1434,7 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 				}
 				istgt_lu_pass_print_sense_key(sense_data + 2);
 				istgt_lu_pass_parse_sense_key(sense_data + 2,
-											  &sk, &asc, &ascq);
+				    &sk, &asc, &ascq);
 			} else {
 #if 0
 				/* INTERNAL TARGET FAILURE */
@@ -1443,7 +1447,7 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 				lu_cmd->status = spec->ccb->csio.scsi_status;
 				/* adjust fixed format length */
 				if (BGET8W(&sense_data[2+0], 6, 7) == 0x70
-					|| BGET8W(&sense_data[2+0], 6, 7) == 0x71) {
+				    || BGET8W(&sense_data[2+0], 6, 7) == 0x71) {
 					len = DGET8(&sense_data[2+7]);
 					len += 8;
 					if (len < SSD_FULL_SIZE) {
@@ -1453,14 +1457,14 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 				}
 				istgt_lu_pass_print_sense_key(sense_data + 2);
 				istgt_lu_pass_parse_sense_key(sense_data + 2,
-											  &sk, &asc, &ascq);
+				    &sk, &asc, &ascq);
 			}
 			return -1;
 		}
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "dxfer=%d, resid=%d, sense=%d\n",
-					   spec->ccb->csio.dxfer_len,
-					   spec->ccb->csio.resid,
-					   spec->ccb->csio.sense_resid);
+		    spec->ccb->csio.dxfer_len,
+		    spec->ccb->csio.resid,
+		    spec->ccb->csio.sense_resid);
 		if (spec->ccb->csio.resid != 0) {
 			/* INTERNAL TARGET FAILURE */
 			BUILD_SENSE(HARDWARE_ERROR, 0x44, 0x00);
@@ -1482,7 +1486,7 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "DOCAM", data, data_len);
 		}
 #endif
-		lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+		lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 	} else {
 		lu_cmd->data_len = 0;
 	}
@@ -1492,7 +1496,7 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 }
 
 static int
-istgt_lu_pass_build_sense_data(ISTGT_LU_PASS *spec, uint8_t *data, int sk, int asc, int ascq)
+istgt_lu_pass_build_sense_data(ISTGT_LU_PASS *spec __attribute__((__unused__)), uint8_t *data, int sk, int asc, int ascq)
 {
 	int rc;
 
@@ -1541,7 +1545,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	int data_alloc_len;
 	uint32_t transfer_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	int rc;
 
 	if (lu_cmd == NULL)
@@ -1569,16 +1573,16 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	} else {
 		lun = 0xffffU;
 	}
-	if (lun >= lu->maxlun) {
+	if (lun >= (uint64_t) lu->maxlun) {
 #ifdef ISTGT_TRACE_PASS
 		ISTGT_ERRLOG("LU%d: LUN%4.4"PRIx64" invalid\n",
-					 lu->num, lun);
+		    lu->num, lun);
 #endif /* ISTGT_TRACE_PASS */
 		if (cdb[0] == SPC_INQUIRY) {
 			allocation_len = DGET16(&cdb[3]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -1590,7 +1594,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			memset(&data[1], 0, data_len - 1);
 			/* ADDITIONAL LENGTH */
 			data[4] = data_len - 5;
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			return 0;
 		} else {
@@ -1611,7 +1615,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "SCSI OP=0x%x, LUN=0x%16.16"PRIx64"\n",
-				   cdb[0], lu_cmd->lun);
+	    cdb[0], lu_cmd->lun);
 #ifdef ISTGT_TRACE_PASS
 	if (cdb[0] != SPC_TEST_UNIT_READY) {
 		istgt_scsi_dump_cdb(cdb);
@@ -1621,7 +1625,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	if (lu_cmd->W_bit != 0) {
 		transfer_len = lu_cmd->transfer_len;
 		rc = istgt_lu_pass_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-										 lu_cmd->iobufsize, transfer_len);
+		    lu_cmd->iobufsize, transfer_len);
 		if (rc < 0) {
 			ISTGT_ERRLOG("lu_pass_transfer_data() failed\n");
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -1648,7 +1652,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			lu_cmd->data = lu_cmd->iobuf;
 			lu_cmd->alloc_len = lu_cmd->iobufsize;
 			if (lu_cmd->transfer_len > lu_cmd->alloc_len) {
-				ISTGT_ERRLOG("alloc_len(%d) too small\n", lu_cmd->alloc_len);
+				ISTGT_ERRLOG("alloc_len(%zd) too small\n", lu_cmd->alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -1691,7 +1695,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			lu_cmd->data = lu_cmd->iobuf;
 			lu_cmd->alloc_len = lu_cmd->iobufsize;
 			if (lu_cmd->transfer_len > lu_cmd->alloc_len) {
-				ISTGT_ERRLOG("alloc_len(%d) too small\n", lu_cmd->alloc_len);
+				ISTGT_ERRLOG("alloc_len(%zd) too small\n", lu_cmd->alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -1710,7 +1714,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				break;
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "EVENT",
-							lu_cmd->data, lu_cmd->data_len);
+			    lu_cmd->data, lu_cmd->data_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 #endif /* ISTGT_TRACE_PASS */
@@ -1738,7 +1742,7 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 		break;
 	default:
 		ISTGT_ERRLOG("unsupported peripheral device type (%x)\n",
-					 spec->inq_pd);
+		    spec->inq_pd);
 		/* LOGICAL UNIT NOT SUPPORTED */
 		BUILD_SENSE(ILLEGAL_REQUEST, 0x25, 0x00);
 		lu_cmd->data_len = 0;
@@ -1747,9 +1751,9 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-				   "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
-				   " complete\n",
-				   cdb[0], lu_cmd->lun, lu_cmd->status);
+	    "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
+	    " complete\n",
+	    cdb[0], lu_cmd->lun, lu_cmd->status);
 	return 0;
 }
 #else /* HAVE_LIBCAM */
@@ -1762,25 +1766,25 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 #include "istgt_scsi.h"
 
 int
-istgt_lu_pass_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_pass_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu __attribute__((__unused__)))
 {
 	return 0;
 }
 
 int
-istgt_lu_pass_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_pass_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu __attribute__((__unused__)))
 {
 	return 0;
 }
 
 int
-istgt_lu_pass_reset(ISTGT_LU_Ptr lu, int lun)
+istgt_lu_pass_reset(ISTGT_LU_Ptr lu __attribute__((__unused__)), int lun __attribute__((__unused__)))
 {
 	return 0;
 }
 
 int
-istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
+istgt_lu_pass_execute(CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd __attribute__((__unused__)))
 {
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "unsupported unit\n");
 	return -1;

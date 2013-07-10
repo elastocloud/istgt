@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,6 +40,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <syslog.h>
 #include <sys/types.h>
 
 #include "istgt.h"
@@ -48,6 +49,11 @@
 #include "istgt_sock.h"
 #include "istgt_misc.h"
 #include "istgt_md5.h"
+
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
 
 //#define TRACE_UCTL
 
@@ -118,6 +124,8 @@ typedef struct istgt_uctl_t {
 typedef UCTL *UCTL_Ptr;
 
 
+static void fatal(const char *format, ...) __attribute__((__noreturn__, __format__(__printf__, 1, 2)));
+
 static void
 fatal(const char *format, ...)
 {
@@ -148,9 +156,9 @@ uctl_readline(UCTL_Ptr uctl)
 	ssize_t total;
 
 	total = istgt_readline_socket(uctl->sock, uctl->recvbuf, uctl->recvbufsize,
-								  uctl->recvtmp, uctl->recvtmpsize,
-								  &uctl->recvtmpidx, &uctl->recvtmpcnt,
-								  uctl->timeout);
+	    uctl->recvtmp, uctl->recvtmpsize,
+	    &uctl->recvtmpidx, &uctl->recvtmpcnt,
+	    uctl->timeout);
 	if (total < 0) {
 		return UCTL_CMD_DISCON;
 	}
@@ -176,6 +184,8 @@ uctl_writeline(UCTL_Ptr uctl)
 	}
 	return UCTL_CMD_OK;
 }
+
+static int uctl_snprintf(UCTL_Ptr uctl, const char *format, ...) __attribute__((__format__(__printf__, 2, 3)));
 
 static int
 uctl_snprintf(UCTL_Ptr uctl, const char *format, ...)
@@ -204,7 +214,7 @@ get_banner(UCTL_Ptr uctl)
 }
 
 static int
-is_err_req_auth(UCTL_Ptr uctl, char *s)
+is_err_req_auth(UCTL_Ptr uctl __attribute__((__unused__)), char *s)
 {
 	const char *req_auth_string = "auth required";
 
@@ -217,7 +227,7 @@ is_err_req_auth(UCTL_Ptr uctl, char *s)
 }
 
 static int
-is_err_chap_seq(UCTL_Ptr uctl, char *s)
+is_err_chap_seq(UCTL_Ptr uctl __attribute__((__unused__)), char *s)
 {
 	const char *chap_seq_string = "CHAP sequence error";
 
@@ -348,7 +358,7 @@ exec_unload(UCTL_Ptr uctl)
 		return UCTL_CMD_ERR;
 	}
 	uctl_snprintf(uctl, "UNLOAD \"%s\" %d\n",
-				  uctl->iqn, uctl->lun);
+	    uctl->iqn, uctl->lun);
 	rc = uctl_writeline(uctl);
 	if (rc != UCTL_CMD_OK) {
 		return rc;
@@ -384,7 +394,7 @@ exec_load(UCTL_Ptr uctl)
 		return UCTL_CMD_ERR;
 	}
 	uctl_snprintf(uctl, "LOAD \"%s\" %d\n",
-				  uctl->iqn, uctl->lun);
+	    uctl->iqn, uctl->lun);
 	rc = uctl_writeline(uctl);
 	if (rc != UCTL_CMD_OK) {
 		return rc;
@@ -468,9 +478,9 @@ exec_change(UCTL_Ptr uctl)
 		return UCTL_CMD_ERR;
 	}
 	uctl_snprintf(uctl, "CHANGE \"%s\" %d \"%s\" "
-				  "\"%s\" \"%s\" \"%s\"\n",
-				  uctl->iqn, uctl->lun, uctl->mtype,
-				  uctl->mflags, uctl->mfile, uctl->msize);
+	    "\"%s\" \"%s\" \"%s\"\n",
+	    uctl->iqn, uctl->lun, uctl->mtype,
+	    uctl->mflags, uctl->mfile, uctl->msize);
 	rc = uctl_writeline(uctl);
 	if (rc != UCTL_CMD_OK) {
 		return rc;
@@ -506,7 +516,7 @@ exec_reset(UCTL_Ptr uctl)
 		return UCTL_CMD_ERR;
 	}
 	uctl_snprintf(uctl, "RESET \"%s\" %d\n",
-				  uctl->iqn, uctl->lun);
+	    uctl->iqn, uctl->lun);
 	rc = uctl_writeline(uctl);
 	if (rc != UCTL_CMD_OK) {
 		return rc;
@@ -619,15 +629,15 @@ do_auth(UCTL_Ptr uctl)
 
 #ifdef TRACE_UCTL
 	printf("do_auth: user=%s, secret=%s, muser=%s, msecret=%s\n",
-		   uctl->auth.user,
-		   uctl->auth.secret,
-		   uctl->auth.muser,
-		   uctl->auth.msecret);
+	    uctl->auth.user,
+	    uctl->auth.secret,
+	    uctl->auth.muser,
+	    uctl->auth.msecret);
 #endif /* TRACE_UCTL */
 
 	/* send algorithm CHAP_A */
 	uctl_snprintf(uctl, "AUTH CHAP_A %d\n",
-				  algorithm);
+	    algorithm);
 	rc = uctl_writeline(uctl);
 	if (rc != UCTL_CMD_OK) {
 		return rc;
@@ -662,8 +672,8 @@ do_auth(UCTL_Ptr uctl)
 	uctl->auth.chap_id[0] = (uint8_t) strtol(chap_i, NULL, 10);
 	/* Challenge Value */
 	rc = istgt_hex2bin(uctl->auth.chap_challenge,
-					   UCTL_CHAP_CHALLENGE_LEN,
-					   chap_c);
+	    UCTL_CHAP_CHALLENGE_LEN,
+	    chap_c);
 	if (rc < 0) {
 		fprintf(stderr, "challenge format error\n");
 		return UCTL_CMD_ERR;
@@ -680,10 +690,10 @@ do_auth(UCTL_Ptr uctl)
 	istgt_md5update(&md5ctx, uctl->auth.chap_id, 1);
 	/* followed by secret */
 	istgt_md5update(&md5ctx, uctl->auth.secret,
-					strlen(uctl->auth.secret));
+	    strlen(uctl->auth.secret));
 	/* followed by Challenge Value */
 	istgt_md5update(&md5ctx, uctl->auth.chap_challenge,
-					uctl->auth.chap_challenge_len);
+	    uctl->auth.chap_challenge_len);
 	/* uctlmd5 is Response Value */
 	istgt_md5final(uctlmd5, &md5ctx);
 
@@ -691,7 +701,7 @@ do_auth(UCTL_Ptr uctl)
 	worksize = uctl->worksize;
 
 	istgt_bin2hex(workp, worksize,
-				  uctlmd5, ISTGT_MD5DIGEST_LEN);
+	    uctlmd5, ISTGT_MD5DIGEST_LEN);
 	hexmd5 = workp;
 	worksize -= strlen(hexmd5) + 1;
 	workp += strlen(hexmd5) + 1;
@@ -704,19 +714,19 @@ do_auth(UCTL_Ptr uctl)
 		/* (binary length MUST not exceed 1024 bytes) */
 		uctl->auth.chap_mchallenge_len = UCTL_CHAP_CHALLENGE_LEN;
 		istgt_gen_random(uctl->auth.chap_mchallenge,
-						 uctl->auth.chap_mchallenge_len);
+		    uctl->auth.chap_mchallenge_len);
 
 		istgt_bin2hex(workp, worksize,
-					  uctl->auth.chap_mchallenge,
-					  uctl->auth.chap_mchallenge_len);
+		    uctl->auth.chap_mchallenge,
+		    uctl->auth.chap_mchallenge_len);
 		hexchallenge = workp;
 		worksize -= strlen(hexchallenge) + 1;
 		workp += strlen(hexchallenge) + 1;
 
 		/* send CHAP_NR with CHAP_IC */
 		uctl_snprintf(uctl, "AUTH CHAP_NR %s %s %d %s\n",
-					  uctl->auth.user, hexmd5,
-					  (int) uctl->auth.chap_mid[0], hexchallenge);
+		    uctl->auth.user, hexmd5,
+		    (int) uctl->auth.chap_mid[0], hexchallenge);
 		rc = uctl_writeline(uctl);
 		if (rc != UCTL_CMD_OK) {
 			return rc;
@@ -763,10 +773,10 @@ do_auth(UCTL_Ptr uctl)
 		istgt_md5update(&md5ctx, uctl->auth.chap_mid, 1);
 		/* followed by secret */
 		istgt_md5update(&md5ctx, uctl->auth.msecret,
-						strlen(uctl->auth.msecret));
+		    strlen(uctl->auth.msecret));
 		/* followed by Challenge Value */
 		istgt_md5update(&md5ctx, uctl->auth.chap_mchallenge,
-						uctl->auth.chap_mchallenge_len);
+		    uctl->auth.chap_mchallenge_len);
 		/* uctlmd5 is expecting Response Value */
 		istgt_md5final(uctlmd5, &md5ctx);
 
@@ -792,7 +802,7 @@ do_auth(UCTL_Ptr uctl)
 		/* not mutual */
 		/* send CHAP_NR */
 		uctl_snprintf(uctl, "AUTH CHAP_NR %s %s\n",
-					  uctl->auth.user, hexmd5);
+		    uctl->auth.user, hexmd5);
 		rc = uctl_writeline(uctl);
 		if (rc != UCTL_CMD_OK) {
 			return rc;
@@ -984,6 +994,9 @@ uctl_init(UCTL_Ptr uctl)
 				uctl->req_auth_auto = 1;
 				uctl->req_auth = 0;
 				uctl->req_auth_mutual = 0;
+			} else if (strcasecmp(val, "None") == 0) {
+				uctl->req_auth = 0;
+				uctl->req_auth_mutual = 0;
 			} else {
 				fprintf(stderr, "unknown auth\n");
 				return -1;
@@ -999,8 +1012,8 @@ uctl_init(UCTL_Ptr uctl)
 		printf("AuthMethod Auto\n");
 	} else {
 		printf("AuthMethod %s %s\n",
-			   uctl->req_auth ? "CHAP" : "",
-			   uctl->req_auth_mutual ? "Mutual" : "");
+		    uctl->req_auth ? "CHAP" : "",
+		    uctl->req_auth_mutual ? "Mutual" : "");
 	}
 #endif /* TRACE_UCTL */
 
@@ -1019,7 +1032,7 @@ uctl_init(UCTL_Ptr uctl)
 	uctl->auth.msecret = xstrdup(msecret);
 #ifdef TRACE_UCTL
 	printf("user=%s, secret=%s, muser=%s, msecret=%s\n",
-		   user, secret, muser, msecret);
+	    user, secret, muser, msecret);
 #endif /* TRACE_UCTL */
 
 	return 0;
@@ -1094,7 +1107,7 @@ main(int argc, char *argv[])
 
 #ifdef HAVE_SETPROCTITLE
 	setproctitle("version %s (%s)",
-				 ISTGT_VERSION, ISTGT_EXTRA_VERSION);
+	    ISTGT_VERSION, ISTGT_EXTRA_VERSION);
 #endif
 
 	memset(&xuctl, 0, sizeof xuctl);
@@ -1120,7 +1133,7 @@ main(int argc, char *argv[])
 			break;
 		case 'l':
 			l = strtol(optarg, NULL, 10);
-			if (l < 0 || l > 0x3fffU) {
+			if (l < 0 || l > 0x3fff) {
 				fatal("invalid lun %s\n", optarg);
 			}
 			lun = (int) l;
@@ -1141,8 +1154,8 @@ main(int argc, char *argv[])
 			if (strcasecmp(optarg, "CHAP") == 0) {
 				req_auth = 1;
 			} else if (strcasecmp(optarg, "Mutual") == 0
-					   || strcasecmp(optarg, "Mutual CHAP") == 0
-					   || strcasecmp(optarg, "CHAP Mutual") == 0) {
+			    || strcasecmp(optarg, "Mutual CHAP") == 0
+			    || strcasecmp(optarg, "CHAP Mutual") == 0) {
 				req_auth = 2;
 			} else if (strcasecmp(optarg, "Auto") == 0) {
 				req_auth = 0;
@@ -1173,7 +1186,7 @@ main(int argc, char *argv[])
 			break;
 		case 'V':
 			printf("istgtcontrol version %s (%s)\n",
-				   ISTGT_VERSION, ISTGT_EXTRA_VERSION);
+			    ISTGT_VERSION, ISTGT_EXTRA_VERSION);
 			exit(EXIT_SUCCESS);
 		case 'H':
 		default:
@@ -1198,6 +1211,8 @@ main(int argc, char *argv[])
 	}
 	uctl->config = config;
 	//istgt_print_config(config);
+
+	istgtcontrol_open_log();
 
 	/* take specified command */
 	if (argc < 1) {
@@ -1247,7 +1262,12 @@ main(int argc, char *argv[])
 	}
 
 	/* build parameters */
-	uctl_init(uctl);
+	rc = uctl_init(uctl);
+	if (rc < 0) {
+		fprintf(stderr, "uctl_init() failed\n");
+		istgt_free_config(config);
+		exit(EXIT_FAILURE);
+	}
 	uctl->recvtmpcnt = 0;
 	uctl->recvtmpidx = 0;
 	uctl->recvtmpsize = sizeof uctl->recvtmp;
@@ -1293,7 +1313,7 @@ main(int argc, char *argv[])
 	}
 #ifdef TRACE_UCTL
 	printf("auto=%d, auth=%d, mutual=%d\n",
-		   uctl->req_auth_auto, uctl->req_auth, uctl->req_auth_mutual);
+	    uctl->req_auth_auto, uctl->req_auth, uctl->req_auth_mutual);
 #endif /* TRACE_UCTL */
 
 	if (host != NULL) {
@@ -1331,7 +1351,7 @@ main(int argc, char *argv[])
 	if (verbose) {
 		printf("iqn=%s, lun=%d\n", NULLP(uctl->iqn), uctl->lun);
 		printf("media file=%s, flags=%s, size=%s\n",
-			   NULLP(uctl->mfile), NULLP(uctl->mflags), NULLP(uctl->msize));
+		    NULLP(uctl->mfile), NULLP(uctl->mflags), NULLP(uctl->msize));
 	}
 
 	/* set signals */
@@ -1434,6 +1454,7 @@ main(int argc, char *argv[])
 	xfree(banner);
 	xfree(cmd);
 	istgt_free_config(config);
+	istgtcontrol_close_log();
 
 	/* return value as execution result */
 	if (exec_result != UCTL_CMD_OK) {

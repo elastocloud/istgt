@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,6 +34,7 @@ typedef struct istgt_queue_t {
 	struct istgt_queue_t *prev;
 	struct istgt_queue_t *next;
 	void *elem;
+	int num;
 } ISTGT_QUEUE;
 typedef ISTGT_QUEUE *ISTGT_QUEUE_Ptr;
 

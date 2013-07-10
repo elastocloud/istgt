@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,9 +30,13 @@
 
 #include <pthread.h>
 #include <time.h>
+#ifdef HAVE_UUID_H
+#include <uuid.h>
+#endif
 #include "istgt.h"
+#include "istgt_queue.h"
 
-#define MAX_LU_LUN 16
+#define MAX_LU_LUN 64
 #define MAX_LU_LUN_SLOT 8
 #define MAX_LU_TSIH 256
 #define MAX_LU_MAP 256
@@ -88,6 +92,7 @@
 #define MAX_INQUIRY_SERIAL 16
 
 #define ISTGT_LU_WORK_BLOCK_SIZE (1ULL * 1024ULL * 1024ULL)
+#define ISTGT_LU_WORK_ATS_BLOCK_SIZE (1ULL * 1024ULL * 1024ULL)
 #define ISTGT_LU_MAX_WRITE_CACHE_SIZE (8ULL * 1024ULL * 1024ULL)
 #define ISTGT_LU_MEDIA_SIZE_MIN (1ULL * 1024ULL * 1024ULL)
 #define ISTGT_LU_MEDIA_EXTEND_UNIT (256ULL * 1024ULL * 1024ULL)
@@ -229,6 +234,7 @@ typedef struct istgt_lu_t {
 	int readonly;
 	int blocklen;
 	int queue_depth;
+	int queue_check;
 
 	int maxlun;
 	ISTGT_LU_LUN lun[MAX_LU_LUN];
@@ -255,15 +261,15 @@ typedef struct istgt_lu_cmd_t {
 	uint8_t *cdb;
 
 	uint8_t *iobuf;
-	int iobufsize;
+	size_t iobufsize;
 	uint8_t *data;
-	int data_len;
-	int alloc_len;
+	size_t data_len;
+	size_t alloc_len;
 
 	int status;
 	uint8_t *sense_data;
-	int sense_data_len;
-	int sense_alloc_len;
+	size_t sense_data_len;
+	size_t sense_alloc_len;
 } ISTGT_LU_CMD;
 typedef ISTGT_LU_CMD *ISTGT_LU_CMD_Ptr;
 
@@ -276,6 +282,7 @@ enum {
 enum {
 	ISTGT_LU_TASK_RESPONSE = 0,
 	ISTGT_LU_TASK_REQPDU = 1,
+	ISTGT_LU_TASK_REQUPDPDU = 2,
 } ISTGT_LU_TASK_TYPE;
 
 typedef struct istgt_lu_task_t {
@@ -299,6 +306,7 @@ typedef struct istgt_lu_task_t {
 	uint8_t *iobuf;
 	uint8_t *data;
 	uint8_t *sense_data;
+	size_t alloc_len;
 
 	int offset;
 	int req_execute;
@@ -310,5 +318,89 @@ typedef struct istgt_lu_task_t {
 	int lock;
 } ISTGT_LU_TASK;
 typedef ISTGT_LU_TASK *ISTGT_LU_TASK_Ptr;
+
+/* lu_disk.c */
+typedef struct istgt_lu_pr_key_t {
+	uint64_t key;
+
+	/* transport IDs */
+	char *registered_initiator_port;
+	char *registered_target_port;
+	/* PERSISTENT RESERVE OUT received from */
+	int pg_idx; /* relative target port */
+	int pg_tag; /* target port group */
+
+	int ninitiator_ports;
+	char **initiator_ports;
+	int all_tpg;
+} ISTGT_LU_PR_KEY;
+
+typedef struct istgt_lu_disk_t {
+	ISTGT_LU_Ptr lu;
+	int num;
+	int lun;
+
+	int fd;
+	const char *file;
+	const char *disktype;
+	void *exspec;
+	uint64_t fsize;
+	uint64_t foffset;
+	uint64_t size;
+	uint64_t blocklen;
+	uint64_t blockcnt;
+
+#ifdef HAVE_UUID_H
+	uuid_t uuid;
+#endif /* HAVE_UUID_H */
+
+	/* cache flags */
+	int read_cache;
+	int write_cache;
+	/* parts for cache */
+	int wbufsize;
+	uint8_t *wbuf;
+	uint64_t woffset;
+	uint64_t wnbytes;
+	int req_write_cache;
+	int err_write_cache;
+
+	/* thin provisioning */
+	int thin_provisioning;
+
+	/* for ats */
+	pthread_mutex_t ats_mutex;
+	int watssize;
+	uint8_t *watsbuf;
+
+	int queue_depth;
+	pthread_mutex_t cmd_queue_mutex;
+	ISTGT_QUEUE cmd_queue;
+	pthread_mutex_t wait_lu_task_mutex;
+	ISTGT_LU_TASK_Ptr wait_lu_task;
+
+	/* PERSISTENT RESERVE */
+	int npr_keys;
+	ISTGT_LU_PR_KEY pr_keys[MAX_LU_RESERVE];
+	uint32_t pr_generation;
+
+	char *rsv_port;
+	uint64_t rsv_key;
+	int rsv_scope;
+	int rsv_type;
+
+	/* SCSI sense code */
+	volatile int sense;
+
+	/* entry */
+	int (*open)(struct istgt_lu_disk_t *spec, int flags, int mode);
+	int (*close)(struct istgt_lu_disk_t *spec);
+	int64_t (*seek)(struct istgt_lu_disk_t *spec, uint64_t offset);
+	int64_t (*read)(struct istgt_lu_disk_t *spec, void *buf, uint64_t nbytes);
+	int64_t (*write)(struct istgt_lu_disk_t *spec, const void *buf, uint64_t nbytes);
+	int64_t (*sync)(struct istgt_lu_disk_t *spec, uint64_t offset, uint64_t nbytes);
+	int (*allocate)(struct istgt_lu_disk_t *spec);
+	int (*setcache)(struct istgt_lu_disk_t *spec);
+} ISTGT_LU_DISK;
 
 #endif /* ISTGT_LU_H */

@@ -1,4 +1,4 @@
-The iSCSI target for FreeBSD 7.1 or later
+The iSCSI target for Debian/NetBSD/FreeBSD
 
 This software (istgt) is the implementation of iSCSI target
 (refer to RFC3720 about iSCSI) for FreeBSD 7.1 or later.
@@ -65,11 +65,13 @@ SrbTimeoutDelta
 External Libs:
  o OpenSSL (shipped with FreeBSD)
  o CAM (shipped with FreeBSD)
+ o VirtualBox 4.x DSO (if use --with-vbox configure option)
 
 Tested Initiators:
  o Microsoft Windows Server 2008 (builtin)
  o Microsoft Windows Server 2008 R2 (builtin)
  o Microsoft Windows 7 Ultimate x64 (builtin)
+ o Microsoft Windows 8 Preview x64 (builtin)
  o Microsoft iSCSI Initiator 2.08 on WS2003
  o Intel iSCSI Remote Boot 2.1.22
  o Intel iSCSI Remote Boot 2.3.81
@@ -82,17 +84,22 @@ Tested Initiators:
  o VMware ESXi 4.0 (builtin)
  o VMware ESXi 4.1 Update 1 (builtin)
  o VMware ESXi 5.0 (builtin)
+ o VMware ESXi 5.1 (builtin)
  o Xen Server 5.0 Update 3 (builtin)
  o Xen Server 5.5 (builtin)
  o FreeBSD 7.1 + iscsi 2.1.3
  o FreeBSD 7.2 + iscsi 2.2.3
  o FreeBSD 7.3 + iscsi 2.2.4
  o FreeBSD 8.2 + isboot 0.2.3
+ o FreeBSD 9.1 + isboot 0.2.6
  o CentOS 5.2 + Open-iSCSI (package)
  o Ubuntu 9.10 + Open-iSCSI (package)
  o gPXE 1.0.0 + VirtualBox 3.1.2 on FreeNAS 0.7.1
+ o iPXE 1.0.0 + isboot 0.2.5 + FreeBSD 9.1
  o FreeNAS 0.7.1 (FreeBSD 7.2/7.3 + iscsi 2.2.4)
  o FreeNAS 0.7.2 (FreeBSD 7.3 + iscsi 2.2.4)
+ o FreeNAS 0.7.5 (FreeBSD 9.0 + iscsi 2.3.1.0)
+ o NAS4Free 9.1.0.1 (FreeBSD 9.1 + iscsi 2.3.1.0)
 
 Features:
  o MCS/MPIO for failover (up to 255 concurrent sessions)
@@ -104,12 +111,18 @@ Features:
  o Multiple LUNs and ACLs for portals
  o IPv6/IPv4 dual support
  (experimental features)
- o Command Queuing (up to 255 depths, disabled by default)
+ o Command Queuing (up to 255 depth, 32 by default)
  o iSCSI boot with Intel PRO/1000 Server Adapters
  o virtual DVD-ROM and virtual tape drive (DLT emulator)
  o pass-through device (only support DA/SA/CD/CH type)
 
 Current Limitations:
+ o can't create empty VirtualBox VirtualDisk.
+ o The parameters other than PG, IG, and LU are not reloaded by SIGHUP.
+ o PG and IG mapped to LU can't be deleted by SIGHUP.
+ o LU connected by the initiator can't be reloaded by SIGHUP.
+ o If you delete an active LU, all connections of the LU are closed by SIGHUP.
+ o Updating IG is not affected until the next login.
  o logical unit is sharing with exclusive lock
  o exclusive port w/asynchronous operation
  o command queuing is incomplete for multiple initiators
@@ -117,7 +130,7 @@ Current Limitations:
  o APTPL (Activate Persist Through Power Loss) is not supported
  o TPGS is incomplete for multipath failover (disabled by default)
  o path-through SA variable length must not exceed 65536 (CAM limit)
- o maximum LUN is 15
+ o maximum LUN is 63
  o maximum PortalGroup are 1024
  o maximum InitiatorGroup, LogicalUnit are 4096
  o maximum mapping per target is 256

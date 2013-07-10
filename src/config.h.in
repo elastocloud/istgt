@@ -1,5 +1,8 @@
 /* src/config.h.in.  Generated from configure.in by autoheader.  */
 
+/* Define if enable symlink-device */
+#undef ALLOW_SYMLINK_DEVICE
+
 /* Define if enable debug */
 #undef DEBUG
 
@@ -35,6 +38,15 @@
 
 /* Define to 1 if you have the `ftruncate' function. */
 #undef HAVE_FTRUNCATE
+
+/* Define 1 if you have the function. */
+#undef HAVE_GCC_ATOMIC_FETCH_AND_ADD_UINT
+
+/* Define 1 if you have the function. */
+#undef HAVE_GCC_ATOMIC_SYNCHRONIZE
+
+/* Define 1 if you have the function. */
+#undef HAVE_GCC_ATOMIC_VAL_COMPARE_AND_SWAP_UINT
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
@@ -75,6 +87,9 @@
 
 /* Define to 1 if you have the <pthread.h> header file. */
 #undef HAVE_PTHREAD_H
+
+/* Define 1 if you have the value. */
+#undef HAVE_PTHREAD_MUTEX_ADAPTIVE_NP
 
 /* Define to 1 if you have the <pthread_np.h> header file. */
 #undef HAVE_PTHREAD_NP_H
@@ -186,6 +201,15 @@
 /* Define to 1 if you have the <uuid.h> header file. */
 #undef HAVE_UUID_H
 
+/* VBox include build */
+#undef ISTGT_VBOXINC_VERSION_BUILD
+
+/* VBox include major */
+#undef ISTGT_VBOXINC_VERSION_MAJOR
+
+/* VBox include minor */
+#undef ISTGT_VBOXINC_VERSION_MINOR
+
 /* Define to 1 if `lstat' dereferences a symlink specified with a trailing
    slash. */
 #undef LSTAT_FOLLOWS_SLASHED_SYMLINK
@@ -214,8 +238,22 @@
 /* Use atomic */
 #undef USE_ATOMIC
 
+/* Use gcc builtin atomic */
+#undef USE_GCC_ATOMIC
+
+/* Use vbox virtual disk support */
+#undef USE_VBOXVD
+
+/* Enable large inode numbers on Mac OS X 10.5.  */
+#ifndef _DARWIN_USE_64_BIT_INODE
+# define _DARWIN_USE_64_BIT_INODE 1
+#endif
+
 /* Number of bits in a file offset, on hosts where this is settable. */
 #undef _FILE_OFFSET_BITS
+
+/* Define if linux host */
+#undef _GNU_SOURCE
 
 /* Define for large files, on AIX-style hosts. */
 #undef _LARGE_FILES

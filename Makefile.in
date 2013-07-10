@@ -8,8 +8,10 @@ exec_prefix = @exec_prefix@
 bindir   = @bindir@
 sbindir  = @sbindir@
 sysconfdir = @sysconfdir@
-datadir  = @datarootdir@
+datarootdir = @datarootdir@
+datadir  = @datadir@
 libexecdir = @libexecdir@
+mandir   = @mandir@
 
 PACKAGE_NAME = @PACKAGE_NAME@
 PACKAGE_STRING = @PACKAGE_STRING@
@@ -26,7 +28,7 @@ DISTEXTVER = `sed -e '/ISTGT_EXTRA_VERSION/!d' -e 's/[^0-9.]*\([0-9.a-z]*\).*/\1
 #DISTDIR  = $(DISTBASE)-$(DISTVER)-$(DISTEXTVER)
 DISTDIR  = $(DISTBASE)-$(DISTEXTVER)
 DISTNAME = $(DISTDIR).tar.gz
-DISTFILES = Makefile.in configure.in install-sh configure \
+DISTFILES = Makefile.in configure.in config.guess config.sub install-sh configure \
 	$(header) $(source) $(ctl_header) $(ctl_source) \
 	$(document) $(sample)
 
@@ -34,6 +36,7 @@ SUBDIRS = src etc doc
 
 #########################################################################
 
+.PHONY: all install install-doc
 all:
 	for subdir in $(SUBDIRS); do \
           (cd $$subdir; $(MAKE) $@) || exit $$?; \
@@ -50,6 +53,7 @@ install-doc:
 	done
 
 
+.PHONY: dist clean distclean local-clean local-distclean depend
 dist: distdir
 	rm -rf $(DISTDIR) $(DISTNAME)
 	mkdir $(DISTDIR)

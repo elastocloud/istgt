@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,6 +32,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,6 +59,11 @@
 #include "istgt_lu.h"
 #include "istgt_proto.h"
 #include "istgt_scsi.h"
+
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
 
 #define TAPE_DEBUG
 //#define ISTGT_TRACE_TAPE
@@ -143,9 +149,9 @@
 #define LBPOS_MAX       0xfffffffffffffffeULL
 
 typedef struct tape_markpos_t {
-	uint64_t lbpos;					/* logical position */
-	uint64_t offset;				/* physical position */
-	uint64_t prev;					/* previous position if not zero */
+	uint64_t lbpos;				/* logical position */
+	uint64_t offset;			/* physical position */
+	uint64_t prev;				/* previous position if not zero */
 	uint64_t junk1;
 } tape_markpos_t;
 
@@ -153,23 +159,23 @@ typedef struct tape_markpos_t {
 #define MAX_FILEMARKS (1024)
 typedef struct tape_ctlblock_t {
 	/* 16k block 0-2 */
-	uint8_t magic[8];				/* 'ISVTCTRL' (network order) */
-	uint64_t endian;				/* endian ID = 0x1122334455667788ULL */
-	uint64_t version;				/* version = 0 */
+	uint8_t magic[8];			/* 'ISVTCTRL' (network order) */
+	uint64_t endian;			/* endian ID = 0x1122334455667788ULL */
+	uint64_t version;			/* version = 0 */
 	uint64_t ctlblocklen;			/* ctlblocklen = 128K */
 
-	uint64_t blocklen;				/* blocklen = 512 */
-	uint64_t marklen;				/* marklen = 128 */
-	uint64_t alignment;				/* alignment = 8 */
-	uint64_t allocate;				/* allocate = 0 */
+	uint64_t blocklen;			/* blocklen = 512 */
+	uint64_t marklen;			/* marklen = 128 */
+	uint64_t alignment;			/* alignment = 8 */
+	uint64_t allocate;			/* allocate = 0 */
 
-	uint64_t type;					/* media type = default */
-	uint64_t id;					/* media ID = empty */
-	uint64_t size;					/* media size = empty */
+	uint64_t type;				/* media type = default */
+	uint64_t id;				/* media ID = empty */
+	uint64_t size;				/* media size = empty */
 	uint64_t junk1;
 
 	uint64_t reserve0[512-12];		/* room for 4K(8x512) */
-	tape_markpos_t marks[MAX_FILEMARKS]; /* marks[0] = BOT, ..., EOT 32K */
+	tape_markpos_t marks[MAX_FILEMARKS];	/* marks[0] = BOT, ..., EOT 32K */
 	uint8_t reserve2[(16*1024) - (8*512)];
 
 	/* 16k block 3-7 */
@@ -195,17 +201,17 @@ typedef struct tape_ctlblock_t {
 
 /* Mark Block = 128B */
 typedef struct tape_markblock_t {
-	uint8_t magic[8];				/* 'ISVT'+ 'BOTB' / 'DATA' / 'EOFB' */
-	uint64_t endian;				/* endian ID = 0x1122334455667788ULL */
-	uint64_t version;				/* version = 0 */
-	uint64_t marklen;				/* marklen = 128 */
+	uint8_t magic[8];			/* 'ISVT'+ 'BOTB' / 'DATA' / 'EOFB' */
+	uint64_t endian;			/* endian ID = 0x1122334455667788ULL */
+	uint64_t version;			/* version = 0 */
+	uint64_t marklen;			/* marklen = 128 */
 
-	uint64_t lblen;					/* logical block length */
-	uint64_t lbpos;					/* logical block position */
-	uint64_t offset;				/* self physical offset */
-	uint64_t prev;					/* previous offset if non zero */
+	uint64_t lblen;				/* logical block length */
+	uint64_t lbpos;				/* logical block position */
+	uint64_t offset;			/* self physical offset */
+	uint64_t prev;				/* previous offset if non zero */
 
-	uint64_t compalgo;				/* compression algorithm (0=none) */
+	uint64_t compalgo;			/* compression algorithm (0=none) */
 	uint64_t vtcompalgo;			/* VT compression algorithm (0=none) */
 	uint64_t vtdecomplen;			/* VT decompression length */
 	uint64_t junk1;
@@ -234,17 +240,17 @@ typedef struct istgt_lu_tape_t {
 	int mflags;
 
 	tape_ctlblock_t *ctlblock;		/* control block */
-	tape_markblock_t *markblock;	/* mark block */
+	tape_markblock_t *markblock;		/* mark block */
 
-	uint64_t lblen;					/* logical block length for fixed */
-	uint64_t lbpos;					/* logical block position */
+	uint64_t lblen;				/* logical block length for fixed */
+	uint64_t lbpos;				/* logical block position */
 
-	uint64_t offset;				/* physical offset in virtual tape */
-	uint64_t prev;					/* previous offset if not zero */
-	int index;						/* current maker index */
+	uint64_t offset;			/* physical offset in virtual tape */
+	uint64_t prev;				/* previous offset if not zero */
+	int index;				/* current maker index */
 
-	int compalgo;					/* compression algorithme */
-	int vtcompalgo;					/* compression algorithme in vtape */
+	int compalgo;				/* compression algorithme */
+	int vtcompalgo;				/* compression algorithme in vtape */
 
 	/* pending flags */
 	int need_savectl;
@@ -270,12 +276,12 @@ typedef struct istgt_lu_tape_t {
 	uint32_t info;
 } ISTGT_LU_TAPE;
 
-#define BUILD_SENSE(SK,ASC,ASCQ)										\
-	do {																\
-		*sense_len =													\
-			istgt_lu_tape_build_sense_data(spec, sense_data,			\
-										   ISTGT_SCSI_SENSE_ ## SK,		\
-										   (ASC), (ASCQ));				\
+#define BUILD_SENSE(SK,ASC,ASCQ)					\
+	do {								\
+		*sense_len =						\
+			istgt_lu_tape_build_sense_data(spec, sense_data, \
+			    ISTGT_SCSI_SENSE_ ## SK,			\
+			    (ASC), (ASCQ));				\
 	} while (0)
 
 static int istgt_lu_tape_save_ctlblock(ISTGT_LU_TAPE *spec);
@@ -347,7 +353,7 @@ istgt_lu_tape_write(ISTGT_LU_TAPE *spec, const void *buf, uint64_t nbytes)
 }
 
 static int64_t
-istgt_lu_tape_sync(ISTGT_LU_TAPE *spec, uint64_t offset, uint64_t nbytes)
+istgt_lu_tape_sync(ISTGT_LU_TAPE *spec, uint64_t offset __attribute__((__unused__)), uint64_t nbytes __attribute__((__unused__)))
 {
 	int64_t rc;
 
@@ -375,15 +381,22 @@ swap_uint64(uint64_t val)
 }
 #endif
 
-#define SWAP_UINT64(D)	\
-(((  (D) >> (56 - 0 )) & 0x00000000000000ffULL)		\
- | (((D) << (56 - 0 )) & 0xff00000000000000ULL)		\
- | (((D) >> (48 - 8 )) & 0x000000000000ff00ULL)		\
- | (((D) << (48 - 8 )) & 0x00ff000000000000ULL)		\
- | (((D) >> (40 - 16)) & 0x0000000000ff0000ULL)		\
- | (((D) << (40 - 16)) & 0x0000ff0000000000ULL)		\
- | (((D) >> (32 - 24)) & 0x00000000ff000000ULL)		\
- | (((D) << (32 - 24)) & 0x000000ff00000000ULL))
+#define SWAP_UINT64(D)						\
+	(     (((D) >> (56 - 0 )) & 0x00000000000000ffULL)	\
+	    | (((D) << (56 - 0 )) & 0xff00000000000000ULL)	\
+	    | (((D) >> (48 - 8 )) & 0x000000000000ff00ULL)	\
+	    | (((D) << (48 - 8 )) & 0x00ff000000000000ULL)	\
+	    | (((D) >> (40 - 16)) & 0x0000000000ff0000ULL)	\
+	    | (((D) << (40 - 16)) & 0x0000ff0000000000ULL)	\
+	    | (((D) >> (32 - 24)) & 0x00000000ff000000ULL)	\
+	    | (((D) << (32 - 24)) & 0x000000ff00000000ULL))
+
+#define ASSERT_PTR_ALIGN(P,A)						\
+	do {								\
+		assert((((uintptr_t)(P)) & ((uintptr_t)(A) - 1ULL)) == 0); \
+	} while (0)
+#define ASSERT_PTR_ALIGN32(P) ASSERT_PTR_ALIGN(P,4)
+#define ASSERT_PTR_ALIGN64(P) ASSERT_PTR_ALIGN(P,8)
 
 
 static int
@@ -397,14 +410,14 @@ istgt_lu_tape_read_native_mark(ISTGT_LU_TAPE *spec, tape_markblock_t *mbp)
 	marklen = spec->ctlblock->marklen;
 
 	rc = istgt_lu_tape_read(spec, mbp, marklen);
-	if (rc < 0 || rc != marklen) {
-		ISTGT_ERRLOG("lu_tape_read() failed: rc %d\n", rc);
+	if (rc < 0 || (uint64_t) rc != marklen) {
+		ISTGT_ERRLOG("lu_tape_read() failed: rc %"PRId64"\n", rc);
 		return -1;
 	}
 	if (mbp->endian != MARK_ENDIAN) {
 		/* convert byte order but except magic */
 		lp = (uint64_t *) mbp;
-		for (i = 1; i < marklen / sizeof(uint64_t); i++) {
+		for (i = 1; i < (int) (marklen / sizeof(uint64_t)); i++) {
 			lp[i] = SWAP_UINT64(lp[i]);
 		}
 	}
@@ -420,7 +433,7 @@ istgt_lu_tape_write_native_mark(ISTGT_LU_TAPE *spec, tape_markblock_t *mbp)
 	marklen = spec->ctlblock->marklen;
 
 	rc = istgt_lu_tape_write(spec, mbp, marklen);
-	if (rc != marklen) {
+	if ((uint64_t) rc != marklen) {
 		ISTGT_ERRLOG("lu_tape_write() failed at offset %" PRIu64 ", size %" PRIu64 "\n", spec->offset, spec->size);
 		return -1;
 	}
@@ -448,7 +461,7 @@ istgt_lu_tape_write_padding(ISTGT_LU_TAPE *spec, uint8_t *data)
 			return -1;
 		}
 		rc = istgt_lu_tape_write(spec, data, padlen);
-		if (rc < 0 || rc != padlen) {
+		if (rc < 0 || (uint64_t) rc != padlen) {
 			ISTGT_ERRLOG("lu_tape_write() failed\n");
 			return -1;
 		}
@@ -486,7 +499,8 @@ istgt_lu_tape_write_eof(ISTGT_LU_TAPE *spec, int count, uint8_t *data)
 	marklen = spec->ctlblock->marklen;
 
 	/* prepare mark */
-	mbp = (tape_markblock_t *) data;
+	ASSERT_PTR_ALIGN64(data);
+	mbp = (tape_markblock_t *) ((uintptr_t)data);
 	memset(mbp, 0, marklen);
 	memcpy(mbp->magic, MARK_EOFMAGIC, MARK_MAGICLEN);
 	mbp->endian = MARK_ENDIAN;
@@ -551,7 +565,8 @@ istgt_lu_tape_write_bot(ISTGT_LU_TAPE *spec, uint8_t *data)
 	marklen = spec->ctlblock->marklen;
 
 	/* prepare mark */
-	mbp = (tape_markblock_t *) data;
+	ASSERT_PTR_ALIGN64(data);
+	mbp = (tape_markblock_t *) ((uintptr_t)data);
 	memset(mbp, 0, marklen);
 	memcpy(mbp->magic, MARK_BOTMAGIC, MARK_MAGICLEN);
 	mbp->endian = MARK_ENDIAN;
@@ -613,7 +628,8 @@ istgt_lu_tape_write_eod(ISTGT_LU_TAPE *spec, uint8_t *data)
 	marklen = spec->ctlblock->marklen;
 
 	/* prepare mark */
-	mbp = (tape_markblock_t *) data;
+	ASSERT_PTR_ALIGN64(data);
+	mbp = (tape_markblock_t *) ((uintptr_t)data);
 	memset(mbp, 0, marklen);
 	memcpy(mbp->magic, MARK_EODMAGIC, MARK_MAGICLEN);
 	mbp->endian = MARK_ENDIAN;
@@ -643,7 +659,7 @@ istgt_lu_tape_write_eod(ISTGT_LU_TAPE *spec, uint8_t *data)
 }
 
 static int
-istgt_lu_tape_write_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t request_len)
+istgt_lu_tape_write_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint64_t request_len)
 {
 	uint64_t tape_leader;
 	uint64_t extendsize;
@@ -657,12 +673,12 @@ istgt_lu_tape_write_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD
 
 	/* writable media? */
 	if (spec->lu->readonly
-		|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+	    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 		/* WRITE PROTECTED */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_DATA_PROTECT,
-											 0x27, 0x00);
+			    ISTGT_SCSI_SENSE_DATA_PROTECT,
+			    0x27, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -673,8 +689,8 @@ istgt_lu_tape_write_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD
 		/* INTERNAL TARGET FAILURE */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-											 0x44, 0x00);
+			    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+			    0x44, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -709,8 +725,8 @@ istgt_lu_tape_write_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD
 			/* VOLUME OVERFLOW */
 			data_len
 				= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-												 ISTGT_SCSI_SENSE_VOLUME_OVERFLOW,
-												 0x00, 0x02);
+				    ISTGT_SCSI_SENSE_VOLUME_OVERFLOW,
+				    0x00, 0x02);
 			lu_cmd->sense_data_len = data_len;
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			return -1;
@@ -725,7 +741,7 @@ istgt_lu_tape_write_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD
 }
 
 static int
-istgt_lu_tape_read_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t request_len)
+istgt_lu_tape_read_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint64_t request_len)
 {
 	uint64_t tape_leader;
 	uint64_t mediasize;
@@ -741,8 +757,8 @@ istgt_lu_tape_read_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 		/* INTERNAL TARGET FAILURE */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-											 0x44, 0x00);
+			    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+			    0x44, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -756,8 +772,8 @@ istgt_lu_tape_read_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 		/* END-OF-PARTITION/MEDIUM DETECTED */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_MEDIUM_ERROR,
-											 0x00, 0x02);
+			    ISTGT_SCSI_SENSE_MEDIUM_ERROR,
+			    0x00, 0x02);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -768,7 +784,7 @@ istgt_lu_tape_read_media_check(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 }
 
 static int
-istgt_lu_tape_prepare_offset(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
+istgt_lu_tape_prepare_offset(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd __attribute__((__unused__)))
 {
 	uint64_t lbpos, offset, prev, marklen;
 	int index_i;
@@ -815,8 +831,8 @@ istgt_lu_tape_write_pending_data(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CM
 			/* INTERNAL TARGET FAILURE */
 			data_len
 				= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-												 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-												 0x44, 0x00);
+				    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+				    0x44, 0x00);
 			lu_cmd->sense_data_len = data_len;
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			return 0;
@@ -883,8 +899,8 @@ istgt_lu_tape_save_ctlblock(ISTGT_LU_TAPE *spec)
 		return -1;
 	}
 	rc = istgt_lu_tape_write(spec, spec->ctlblock,
-							 spec->ctlblock->ctlblocklen);
-	if (rc < 0 || rc != spec->ctlblock->ctlblocklen) {
+	    spec->ctlblock->ctlblocklen);
+	if (rc < 0 || (uint64_t) rc != spec->ctlblock->ctlblocklen) {
 		return -1;
 	}
 	return rc;
@@ -906,8 +922,8 @@ istgt_lu_tape_init_ctlblock(ISTGT_LU_TAPE *spec, int newfile)
 	}
 	if (memcmp(cbp->magic, CTLMAGIC, CTLMAGICLEN) != 0) {
 		if (spec->lu->readonly
-			|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)
-			|| !newfile) {
+		    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)
+		    || !newfile) {
 			ISTGT_ERRLOG("Can not initialize \"%s\"\n", spec->file);
 			return -1;
 		}
@@ -949,20 +965,20 @@ istgt_lu_tape_init_ctlblock(ISTGT_LU_TAPE *spec, int newfile)
 		if (cbp->endian != CTLENDIAN) {
 			/* convert byte order but except magic */
 			lp = (uint64_t *) cbp;
-			for (i = 1; i < CTLBLOCKLEN / sizeof(uint64_t); i++) {
+			for (i = 1; i < (int) (CTLBLOCKLEN / sizeof(uint64_t)); i++) {
 				lp[i] = SWAP_UINT64(lp[i]);
 			}
 		}
 		if (cbp->ctlblocklen == 0ULL
-			|| cbp->blocklen == 0ULL
-			|| cbp->marklen == 0ULL
-			|| cbp->alignment == 0ULL) {
+		    || cbp->blocklen == 0ULL
+		    || cbp->marklen == 0ULL
+		    || cbp->alignment == 0ULL) {
 			ISTGT_ERRLOG("bad length\n");
 			return -1;
 		}
 		if (cbp->version > CTLVERSION) {
 			ISTGT_ERRLOG("unsupported tape version 0x%"PRIx64"\n",
-						 cbp->version);
+			    cbp->version);
 			return -1;
 		}
 		if (cbp->marklen > MARK_MAXLENGTH) {
@@ -1014,7 +1030,7 @@ istgt_lu_tape_load_media(ISTGT_LU_TAPE *spec)
 		return -1;
 	}
 	if (strcasecmp(lu->lun[spec->lun].u.removable.file,
-				   "/dev/null") == 0) {
+		"/dev/null") == 0) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: empty\n", lu->num);
 		spec->file = NULL;
 		spec->size = 0;
@@ -1075,7 +1091,7 @@ istgt_lu_tape_load_media(ISTGT_LU_TAPE *spec)
 		}
 	}
 	if (spec->lu->readonly
-		|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+	    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 		flags = O_RDONLY;
 	} else {
 		flags = O_RDWR;
@@ -1086,14 +1102,15 @@ istgt_lu_tape_load_media(ISTGT_LU_TAPE *spec)
 		/* new file? */
 		newfile = 1;
 		if (spec->lu->readonly
-			|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+		    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 			flags = O_RDONLY;
 		} else {
 			flags = (O_CREAT | O_EXCL | O_RDWR);
 		}
 		rc = istgt_lu_tape_open(spec, flags, 0666);
 		if (rc < 0) {
-			ISTGT_ERRLOG("LU%d: LUN%d: open error\n", lu->num, spec->lun);
+			ISTGT_ERRLOG("LU%d: LUN%d: open error(errno=%d)\n",
+			    lu->num, spec->lun, errno);
 			return -1;
 		}
 		if (lu->lun[spec->lun].u.removable.size < ISTGT_LU_MEDIA_SIZE_MIN) {
@@ -1102,7 +1119,7 @@ istgt_lu_tape_load_media(ISTGT_LU_TAPE *spec)
 	}
 
 	if (spec->lu->readonly
-		|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+	    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 		/* readonly */
 	} else {
 		if (newfile == 0) {
@@ -1133,7 +1150,7 @@ istgt_lu_tape_unload_media(ISTGT_LU_TAPE *spec)
 	int rc;
 
 	if (!istgt_lu_tape_media_present(spec)
-		&& !spec->mchanged) {
+	    && !spec->mchanged) {
 		/* media absent */
 		return 0;
 	}
@@ -1157,7 +1174,7 @@ istgt_lu_tape_unload_media(ISTGT_LU_TAPE *spec)
 	}
 
 	if (!spec->lu->readonly
-		&& !(spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+	    && !(spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 		rc = istgt_lu_tape_sync(spec, 0, spec->size);
 		if (rc < 0) {
 			ISTGT_ERRLOG("lu_tape_sync() failed\n");
@@ -1294,7 +1311,7 @@ istgt_lu_tape_allocate(ISTGT_LU_TAPE *spec)
 		return -1;
 	}
 	rc = istgt_lu_tape_write(spec, data, nbytes);
-	if (rc == -1 || rc != nbytes) {
+	if (rc == -1 || (uint64_t) rc != nbytes) {
 		ISTGT_ERRLOG("lu_tape_write() failed\n");
 		xfree(data);
 		return -1;
@@ -1305,7 +1322,7 @@ istgt_lu_tape_allocate(ISTGT_LU_TAPE *spec)
 }
 
 int
-istgt_lu_tape_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_tape_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_TAPE *spec;
 	uint64_t gb_size;
@@ -1322,17 +1339,17 @@ istgt_lu_tape_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 
 	if (sizeof(tape_ctlblock_t) != CTLBLOCKLEN) {
 		ISTGT_ERRLOG("Invalid ctlblock len %" PRIu64 ".\n",
-					 sizeof(tape_ctlblock_t));
+		    (uint64_t) sizeof(tape_ctlblock_t));
 		return -1;
 	}
 
 	printf("LU%d TAPE UNIT\n", lu->num);
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d TargetName=%s\n",
-				   lu->num, lu->name);
+	    lu->num, lu->name);
 	for (i = 0; i < lu->maxlun; i++) {
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 			lu->lun[i].spec = NULL;
 			continue;
 		}
@@ -1341,7 +1358,7 @@ istgt_lu_tape_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			return -1;
 		}
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d removable\n",
-					   lu->num, i);
+		    lu->num, i);
 
 		spec = xmalloc(sizeof *spec);
 		memset(spec, 0, sizeof *spec);
@@ -1381,28 +1398,28 @@ istgt_lu_tape_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			spec->mwait = 0;
 
 			if (spec->lu->readonly
-				|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+			    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 				ro = 1;
 			} else {
 				ro = 0;
 			}
 
 			printf("LU%d: LUN%d file=%s, size=%"PRIu64", flag=%s\n",
-				   lu->num, i, spec->file, spec->size, ro ? "ro" : "rw");
+			    lu->num, i, spec->file, spec->size, ro ? "ro" : "rw");
 			printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
-				   lu->num, i, spec->blockcnt, spec->blocklen);
+			    lu->num, i, spec->blockcnt, spec->blocklen);
 
 			gb_size = spec->size / ISTGT_LU_1GB;
 			mb_size = (spec->size % ISTGT_LU_1GB) / ISTGT_LU_1MB;
 			if (gb_size > 0) {
 				mb_digit = (int) (((mb_size * 100) / 1024) / 10);
 				printf("LU%d: LUN%d %"PRIu64".%dGB %sstorage for %s\n",
-					   lu->num, i, gb_size, mb_digit,
-					   lu->readonly ? "readonly " : "", lu->name);
+				    lu->num, i, gb_size, mb_digit,
+				    lu->readonly ? "readonly " : "", lu->name);
 			} else {
 				printf("LU%d: LUN%d %"PRIu64"MB %sstorage for %s\n",
-					   lu->num, i, mb_size,
-					   lu->readonly ? "readonly " : "", lu->name);
+				    lu->num, i, mb_size,
+				    lu->readonly ? "readonly " : "", lu->name);
 			}
 		} else {
 			/* initial state */
@@ -1411,7 +1428,7 @@ istgt_lu_tape_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			spec->mwait = 0;
 
 			printf("LU%d: LUN%d empty slot\n",
-				   lu->num, i);
+			    lu->num, i);
 		}
 
 		lu->lun[i].spec = spec;
@@ -1421,7 +1438,7 @@ istgt_lu_tape_init(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 }
 
 int
-istgt_lu_tape_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+istgt_lu_tape_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 {
 	ISTGT_LU_CMD lu_cmd;
 	ISTGT_LU_TAPE *spec;
@@ -1444,11 +1461,11 @@ istgt_lu_tape_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 	lu_cmd.sense_alloc_len = alloc_len;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d TargetName=%s\n",
-				   lu->num, lu->name);
+	    lu->num, lu->name);
 	for (i = 0; i < lu->maxlun; i++) {
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 			continue;
 		}
 		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_REMOVABLE) {
@@ -1466,7 +1483,7 @@ istgt_lu_tape_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		}
 
 		if (!spec->lu->readonly
-			&& !(spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+		    && !(spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 			rc = istgt_lu_tape_sync(spec, 0, spec->size);
 			if (rc < 0) {
 				//ISTGT_ERRLOG("LU%d: lu_tape_sync() failed\n", lu->num);
@@ -1489,7 +1506,7 @@ istgt_lu_tape_shutdown(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 }
 
 static int
-istgt_lu_tape_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int sel, uint8_t *data, int alloc_len)
+istgt_lu_tape_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn __attribute__((__unused__)), uint8_t *cdb __attribute__((__unused__)), int sel, uint8_t *data, int alloc_len)
 {
 	uint64_t fmt_lun, lun, method;
 	int hlen = 0, len = 0;
@@ -1519,7 +1536,7 @@ istgt_lu_tape_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 #if 0
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "LU%d: LUN%d none\n",
-						   lu->num, i);
+			    lu->num, i);
 #endif
 			continue;
 		}
@@ -1532,7 +1549,7 @@ istgt_lu_tape_scsi_report_luns(ISTGT_LU_Ptr lu, CONN_Ptr conn, uint8_t *cdb, int
 			method = 0x00U;
 			fmt_lun = (method & 0x03U) << 62;
 			fmt_lun |= (lun & 0x00ffU) << 48;
-		} else if (lu->maxlun <= 0x4000U) {
+		} else if (lu->maxlun <= 0x4000) {
 			/* below 16384 */
 			method = 0x01U;
 			fmt_lun = (method & 0x03U) << 62;
@@ -1819,7 +1836,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 			istgt_strcpy_pad(&cp[12], 16, spec->lu->inq_product, ' ');
 			/* PRODUCT SERIAL NUMBER */
 			istgt_strcpy_pad(&cp[28], MAX_LU_SERIAL_STRING,
-							 spec->lu->inq_serial, ' ');
+			    spec->lu->inq_serial, ' ');
 			plen += 16 + MAX_LU_SERIAL_STRING;
 
 			cp[3] = plen;
@@ -1843,8 +1860,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 
 			/* IDENTIFIER */
 			plen = snprintf((char *) &cp[4], MAX_TARGET_NAME,
-							"%s",
-							spec->lu->name);
+			    "%s", spec->lu->name);
 			cp[3] = plen;
 			len += 4 + plen;
 
@@ -1866,9 +1882,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 
 			/* IDENTIFIER */
 			plen = snprintf((char *) &cp[4], MAX_TARGET_NAME,
-							"%s"",t,0x""%4.4x",
-							spec->lu->name,
-							conn->portal.tag);
+			    "%s"",t,0x""%4.4x", spec->lu->name, conn->portal.tag);
 			cp[3] = plen;
 			len += 4 + plen;
 
@@ -1883,7 +1897,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 			BDSET8W(&cp[1], 1, 7, 1); /* PIV */
 			BDADD8W(&cp[1], SPC_VPD_ASSOCIATION_TARGET_PORT, 5, 2);
 			BDADD8W(&cp[1], SPC_VPD_IDENTIFIER_TYPE_RELATIVE_TARGET_PORT,
-					3, 4);
+			    3, 4);
 			/* Reserved */
 			cp[2] = 0;
 			/* IDENTIFIER LENGTH */
@@ -1912,7 +1926,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 			BDSET8W(&cp[1], 1, 7, 1); /* PIV */
 			BDADD8W(&cp[1], SPC_VPD_ASSOCIATION_TARGET_PORT, 5, 2);
 			BDADD8W(&cp[1], SPC_VPD_IDENTIFIER_TYPE_TARGET_PORT_GROUP,
-					3, 4);
+			    3, 4);
 			/* Reserved */
 			cp[2] = 0;
 			/* IDENTIFIER LENGTH */
@@ -1939,7 +1953,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 			BDSET8W(&cp[1], 1, 7, 1); /* PIV */
 			BDADD8W(&cp[1], SPC_VPD_ASSOCIATION_TARGET_PORT, 5, 2);
 			BDADD8W(&cp[1], SPC_VPD_IDENTIFIER_TYPE_LOGICAL_UNIT_GROUP,
-					3, 4);
+			    3, 4);
 			/* Reserved */
 			cp[2] = 0;
 			/* IDENTIFIER LENGTH */
@@ -2115,9 +2129,7 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 
 				/* IDENTIFIER */
 				plen = snprintf((char *) &cp2[4], MAX_TARGET_NAME,
-								"%s"",t,0x""%4.4x",
-								spec->lu->name,
-								pg_tag);
+				    "%s"",t,0x""%4.4x", spec->lu->name, pg_tag);
 				cp2[3] = plen;
 				plen2 += 4 + plen;
 
@@ -2326,17 +2338,17 @@ istgt_lu_tape_scsi_inquiry(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, uin
 	return hlen + len;
 }
 
-#define MODE_SENSE_PAGE_INIT(B,L,P,SP)				\
-	do {											\
-		memset((B), 0, (L));						\
-		if ((SP) != 0x00) {							\
-			(B)[0] = (P) | 0x40; /* PAGE + SPF=1 */	\
-			(B)[1] = (SP);							\
-			DSET16(&(B)[2], (L) - 4);				\
-		} else {									\
-			(B)[0] = (P);							\
-			(B)[1] = (L) - 2;						\
-		}											\
+#define MODE_SENSE_PAGE_INIT(B,L,P,SP)					\
+	do {								\
+		memset((B), 0, (L));					\
+		if ((SP) != 0x00) {					\
+			(B)[0] = (P) | 0x40; /* PAGE + SPF=1 */		\
+			(B)[1] = (SP);					\
+			DSET16(&(B)[2], (L) - 4);			\
+		} else {						\
+			(B)[0] = (P);					\
+			(B)[1] = (L) - 2;				\
+		}							\
 	} while (0)
 
 static int
@@ -2356,9 +2368,9 @@ istgt_lu_tape_scsi_mode_sense_page(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *
 		/* Current values */
 	} else if (pc == 0x01) {
 		/* Changeable values */
-		if (page != 0x08) {
+		if (page != 0x0f) {
 			/* not supported */
-			return 0;
+			return -1;
 		}
 	} else if (pc == 0x02) {
 		/* Default values */
@@ -2405,6 +2417,17 @@ istgt_lu_tape_scsi_mode_sense_page(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *
 
 		plen = 0x0e + 2;
 		MODE_SENSE_PAGE_INIT(cp, plen, page, subpage);
+		if (pc == 0x01) {
+			// Changeable values
+			BDADD8(&cp[2], 1, 7);       /* DCE data compression enable */
+			BDADD8(&cp[2], 1, 6);       /* DCC data compression capable */
+			BDADD8(&cp[3], 1, 7);       /* DDE data decompression enable */
+			BDADD8W(&cp[3], 0, 6, 2);   /* RED report exception on decompression */
+			DSET32(&cp[4], 0xffffffffU); /* COMPRESSION ALGORITHM */
+			DSET32(&cp[8], 0xffffffffU); /* DECOMPRESSION ALGORITHM */
+			len += plen;
+			break;
+		}
 		if (spec->compression) {
 			BDADD8(&cp[2], 1, 7);   /* DCE=1 compression enable */
 		} else {
@@ -2574,7 +2597,7 @@ istgt_lu_tape_scsi_mode_sense6(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb,
 		data[1] = MEDIATYPE_DFLT;       /* Medium Type */
 		data[2] = 0;                    /* Device-Specific Parameter */
 		if (spec->lu->readonly
-			|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+		    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 			BDADD8(&data[2], 1, 7);     /* WP */
 		}
 	} else {
@@ -2629,6 +2652,9 @@ istgt_lu_tape_scsi_mode_sense6(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb,
 	data[3] = len;                  /* Block Descripter Length */
 
 	plen = istgt_lu_tape_scsi_mode_sense_page(spec, conn, cdb, pc, page, subpage, &cp[0], alloc_len);
+	if (plen < 0) {
+		return -1;
+	}
 	cp += plen;
 
 	total = hlen + len + plen;
@@ -2651,7 +2677,7 @@ istgt_lu_tape_scsi_mode_sense10(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb
 		data[2] = MEDIATYPE_DFLT;       /* Medium Type */
 		data[3] = 0;                    /* Device-Specific Parameter */
 		if (spec->lu->readonly
-			|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+		    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 			BDADD8(&data[3], 1, 7);     /* WP */
 		}
 	} else {
@@ -2712,6 +2738,9 @@ istgt_lu_tape_scsi_mode_sense10(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb
 	DSET16(&data[6], len);          /* Block Descripter Length */
 
 	plen = istgt_lu_tape_scsi_mode_sense_page(spec, conn, cdb, pc, page, subpage, &cp[0], alloc_len);
+	if (plen < 0) {
+		return -1;
+	}
 	cp += plen;
 
 	total = hlen + len + plen;
@@ -2726,7 +2755,7 @@ istgt_lu_tape_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf
 	int rc;
 
 	if (len > bufsize) {
-		ISTGT_ERRLOG("bufsize(%d) too small\n", bufsize);
+		ISTGT_ERRLOG("bufsize(%zd) too small\n", bufsize);
 		return -1;
 	}
 	rc = istgt_iscsi_transfer_out(conn, lu_cmd, buf, bufsize, len);
@@ -2740,8 +2769,8 @@ istgt_lu_tape_transfer_data(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *buf
 static int
 istgt_lu_tape_scsi_mode_select_page(ISTGT_LU_TAPE *spec, CONN_Ptr conn, uint8_t *cdb, int pf, int sp, uint8_t *data, size_t len)
 {
+	size_t hlen, plen;
 	int ps, spf, page, subpage;
-	int hlen, plen;
 	int rc;
 
 	if (pf == 0) {
@@ -2877,7 +2906,7 @@ istgt_convert_signed_24bits(uint32_t usval)
 #define THREAD_YIELD do { istgt_yield(); usleep(1000); } while (0)
 
 static int
-istgt_lu_tape_shrink_media(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t request_len, uint8_t *data)
+istgt_lu_tape_shrink_media(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd __attribute__((__unused__)), uint64_t request_len, uint8_t *data __attribute__((__unused__)))
 {
 	struct stat st;
 	uint64_t mediasize;
@@ -2920,7 +2949,7 @@ istgt_lu_tape_shrink_media(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 }
 
 static int
-istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data)
+istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data)
 {
 	struct stat st;
 	uint64_t mediasize;
@@ -2946,12 +2975,12 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 	}
 
 	if (spec->lu->readonly
-		|| (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
+	    || (spec->mflags & ISTGT_LU_FLAG_MEDIA_READONLY)) {
 		/* WRITE PROTECTED */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_DATA_PROTECT,
-											 0x27, 0x00);
+			    ISTGT_SCSI_SENSE_DATA_PROTECT,
+			    0x27, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -2960,8 +2989,8 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		/* PARAMETER VALUE INVALID */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_ILLEGAL_REQUEST,
-											 0x26, 0x02);
+			    ISTGT_SCSI_SENSE_ILLEGAL_REQUEST,
+			    0x26, 0x02);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -2970,8 +2999,8 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		/* INTERNAL TARGET FAILURE */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-											 0x44, 0x00);
+			    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+			    0x44, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -2984,8 +3013,8 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		/* LOGICAL UNIT FAILURE */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-											 0x3e, 0x01);
+			    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+			    0x3e, 0x01);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -3001,7 +3030,7 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		ISTGT_ERRLOG("lu_tape_lseek() failed\n");
 		goto io_failure;
 	}
-	if (istgt_lu_tape_write(spec, data, request_len) != request_len) {
+	if ((uint64_t) istgt_lu_tape_write(spec, data, request_len) != request_len) {
 		ISTGT_ERRLOG("lu_tape_write() failed\n");
 		goto io_failure;
 	}
@@ -3033,7 +3062,7 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 			ISTGT_ERRLOG("lu_tape_seek() failed\n");
 			goto io_failure;
 		}
-		if (istgt_lu_tape_write(spec, data, marklen) != marklen) {
+		if ((uint64_t) istgt_lu_tape_write(spec, data, marklen) != marklen) {
 			ISTGT_ERRLOG("istgt_lu_tape_write() failed\n");
 			goto io_failure;
 		}
@@ -3048,7 +3077,7 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		memset(data, 0, wlen);
 		for ( ; offset < mediasize - wlen; offset += wlen) {
 			THREAD_YIELD;
-			if (istgt_lu_tape_write(spec, data, wlen) != wlen) {
+			if ((uint64_t) istgt_lu_tape_write(spec, data, wlen) != wlen) {
 				ISTGT_ERRLOG("lu_tape_write() failed\n");
 				goto io_failure;
 			}
@@ -3057,7 +3086,7 @@ istgt_lu_tape_scsi_erase(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		rest = mediasize % wlen;
 		if (rest != 0) {
 			THREAD_YIELD;
-			if (istgt_lu_tape_write(spec, data, rest) != rest) {
+			if ((uint64_t) istgt_lu_tape_write(spec, data, rest) != rest) {
 				ISTGT_ERRLOG("lu_tape_write() failed\n");
 				goto io_failure;
 			}
@@ -3094,7 +3123,7 @@ istgt_lu_tape_valid_mark_magic(tape_markblock_t *mbp)
 }
 
 static int
-istgt_lu_tape_search_lbpos(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lbpos, uint8_t *data)
+istgt_lu_tape_search_lbpos(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lbpos, uint8_t *data)
 {
 	tape_markblock_t *mbp;
 	uint64_t tape_leader;
@@ -3139,15 +3168,16 @@ istgt_lu_tape_search_lbpos(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 		/* END-OF-PARTITION/MEDIUM DETECTED */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_MEDIUM_ERROR,
-											 0x00, 0x02);
+			    ISTGT_SCSI_SENSE_MEDIUM_ERROR,
+			    0x00, 0x02);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
 	}
 
 	/* next step, search in file */
-	mbp = (tape_markblock_t *) data;
+	ASSERT_PTR_ALIGN64(data);
+	mbp = (tape_markblock_t *) ((uintptr_t)data);
 	prev = spec->ctlblock->marks[index_i].prev;
 	found_lbpos = 0;
 	for (offset = offset1; offset < offset2; ) {
@@ -3167,7 +3197,7 @@ istgt_lu_tape_search_lbpos(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 		}
 #ifdef TAPE_DEBUG
 		ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "read mlbpos=%" PRIu64 ", mlblen=%" PRIu64 ", moffset=%" PRIu64 ", offset=%" PRIu64 ", index=%d\n",
-					   mbp->lbpos, mbp->lblen, mbp->offset, offset, index_i);
+		    mbp->lbpos, mbp->lblen, mbp->offset, offset, index_i);
 #endif /* TAPE_DEBUG */
 		if (lbpos == mbp->lbpos) {
 			found_lbpos = 1;
@@ -3189,8 +3219,8 @@ istgt_lu_tape_search_lbpos(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 		/* INTERNAL TARGET FAILURE */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-											 0x44, 0x00);
+			    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+			    0x44, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -3223,7 +3253,7 @@ istgt_lu_tape_search_lbpos(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 }
 
 static int
-istgt_lu_tape_search_lbpos_fast_reverse(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lbpos, int count, uint8_t *data)
+istgt_lu_tape_search_lbpos_fast_reverse(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, uint64_t lbpos, int count, uint8_t *data __attribute__((__unused__)))
 {
 	uint64_t xlbpos, offset, prev;
 	int index_i;
@@ -3239,8 +3269,8 @@ istgt_lu_tape_search_lbpos_fast_reverse(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTG
 
 	/* END mark is special */
 	if (offset == MARK_END
-		|| spec->ctlblock->marks[index_i].offset == MARK_END
-		|| spec->ctlblock->marks[index_i + 1].offset == MARK_END)
+	    || spec->ctlblock->marks[index_i].offset == MARK_END
+	    || spec->ctlblock->marks[index_i + 1].offset == MARK_END)
 		return -1;
 
 	/* this lbpos have previous offset? */
@@ -3312,7 +3342,7 @@ istgt_lu_tape_scsi_space(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 			/* first check search cache etc. */
 			data_len
 				= istgt_lu_tape_search_lbpos_fast_reverse(spec, conn, lu_cmd,
-														  lbpos, count, data);
+				    lbpos, count, data);
 			if (data_len > 0) {
 				/* scsi condition met */
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -3361,8 +3391,8 @@ istgt_lu_tape_scsi_space(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 				/* INTERNAL TARGET FAILURE */
 				data_len
 					= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-													 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-													 0x44, 0x00);
+					    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+					    0x44, 0x00);
 				lu_cmd->sense_data_len = data_len;
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return data_len;
@@ -3385,8 +3415,8 @@ istgt_lu_tape_scsi_space(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 				/* END-OF-DATA DETECTED */
 				data_len
 					= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-													 ISTGT_SCSI_SENSE_BLANK_CHECK,
-													 0x00, 0x05);
+					    ISTGT_SCSI_SENSE_BLANK_CHECK,
+					    0x00, 0x05);
 				DSET32(&data[2+3], (uint32_t) count - i);
 				lu_cmd->sense_data_len = data_len;
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -3431,8 +3461,8 @@ istgt_lu_tape_scsi_space(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 			/* INTERNAL TARGET FAILURE */
 			data_len
 				= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-												 ISTGT_SCSI_SENSE_HARDWARE_ERROR,
-												 0x44, 0x00);
+				    ISTGT_SCSI_SENSE_HARDWARE_ERROR,
+				    0x44, 0x00);
 			lu_cmd->sense_data_len = data_len;
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			return data_len;
@@ -3470,8 +3500,8 @@ istgt_lu_tape_scsi_space(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu
 		/* INVALID FIELD IN CDB */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_ILLEGAL_REQUEST,
-											 0x24, 0x00);
+			    ISTGT_SCSI_SENSE_ILLEGAL_REQUEST,
+			    0x24, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return data_len;
@@ -3514,7 +3544,7 @@ istgt_lu_tape_scsi_locate(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr l
 }
 
 static int
-istgt_lu_tape_scsi_read_position(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, int sa, uint8_t *data)
+istgt_lu_tape_scsi_read_position(ISTGT_LU_TAPE *spec, CONN_Ptr conn __attribute__((__unused__)), ISTGT_LU_CMD_Ptr lu_cmd, int sa, uint8_t *data)
 {
 	uint64_t lbpos;
 	int data_len;
@@ -3592,8 +3622,8 @@ istgt_lu_tape_scsi_read_position(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CM
 		/* INVALID FIELD IN CDB */
 		data_len
 			= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-											 ISTGT_SCSI_SENSE_ILLEGAL_REQUEST,
-											 0x24, 0x00);
+			    ISTGT_SCSI_SENSE_ILLEGAL_REQUEST,
+			    0x24, 0x00);
 		lu_cmd->sense_data_len = data_len;
 		lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 		return -1;
@@ -3710,7 +3740,8 @@ istgt_lu_tape_variable_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_P
 	alignment = spec->ctlblock->alignment;
 	lbpos = spec->lbpos;
 	offset = spec->offset;
-	mbp = (tape_markblock_t *) lu_cmd->iobuf;
+	ASSERT_PTR_ALIGN64(lu_cmd->iobuf);
+	mbp = (tape_markblock_t *) ((uintptr_t)lu_cmd->iobuf);
 	data = (uint8_t *) lu_cmd->iobuf + marklen;
 	total = 0ULL;
 	u = 0;
@@ -3720,12 +3751,12 @@ istgt_lu_tape_variable_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_P
 
 #ifdef TAPE_DEBUG
 	ISTGT_TRACELOG(ISTGT_TRACE_LU, "Read: %"PRIu64" (%"PRIu64")\n",
-				   lblen, offset);
+	    lblen, offset);
 #endif /* TAPE_DEBUG */
 
 	if (request_len > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%u)\n",
-					 request_len, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%zu)\n",
+		    request_len, lu_cmd->iobufsize);
 		return -1;
 	}
 
@@ -3754,7 +3785,7 @@ istgt_lu_tape_variable_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_P
 	}
 	if (lbpos != mbp->lbpos) {
 		ISTGT_ERRLOG("bad position offset %"PRIu64" lbpos %"PRIu64
-					 " mlbpos %"PRIu64"\n", offset, lbpos, mbp->lbpos);
+		    " mlbpos %"PRIu64"\n", offset, lbpos, mbp->lbpos);
 		return -1;
 	}
 	if (memcmp(mbp->magic, MARK_EOFMAGIC, MARK_MAGICLEN) == 0) {
@@ -3775,13 +3806,13 @@ istgt_lu_tape_variable_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_P
 	}
 	/* user data */
 	rc = istgt_lu_tape_read(spec, data + total, mbp->lblen);
-	if (rc < 0 || rc != mbp->lblen) {
-		ISTGT_ERRLOG("lu_tape_read() failed: rc %d\n", rc);
+	if (rc < 0 || (uint64_t) rc != mbp->lblen) {
+		ISTGT_ERRLOG("lu_tape_read() failed: rc %"PRId64"\n", rc);
 		return -1;
 	}
 #ifdef TAPE_DEBUG
 	ISTGT_TRACELOG(ISTGT_TRACE_LU, "read mlbpos=%"PRIu64", lblen=%"PRIu64
-				   ", offset=%"PRIu64"\n", mbp->lbpos, mbp->lblen, offset);
+	    ", offset=%"PRIu64"\n", mbp->lbpos, mbp->lblen, offset);
 #endif /* TAPE_DEBUG */
 	/* 1 block OK */
 	spec->info -= (uint32_t) lblen;
@@ -3843,7 +3874,8 @@ istgt_lu_tape_fixed_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 	alignment = spec->ctlblock->alignment;
 	lbpos = spec->lbpos;
 	offset = spec->offset;
-	mbp = (tape_markblock_t *) lu_cmd->iobuf;
+	ASSERT_PTR_ALIGN64(lu_cmd->iobuf);
+	mbp = (tape_markblock_t *) ((uintptr_t)lu_cmd->iobuf);
 	data = (uint8_t *) lu_cmd->iobuf + marklen;
 	total = 0ULL;
 	/* (header + data) x N + EOD */
@@ -3852,12 +3884,12 @@ istgt_lu_tape_fixed_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 
 #ifdef TAPE_DEBUG
 	ISTGT_TRACELOG(ISTGT_TRACE_LU, "Read: %"PRIu64" x %u (%"PRIu64")\n",
-				   lblen, count, offset);
+	    lblen, count, offset);
 #endif /* TAPE_DEBUG */
 
 	if (request_len > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%u)\n",
-					 request_len, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%zu)\n",
+		    request_len, lu_cmd->iobufsize);
 		return -1;
 	}
 
@@ -3891,7 +3923,7 @@ istgt_lu_tape_fixed_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 			}
 			if (lbpos != mbp->lbpos) {
 				ISTGT_ERRLOG("bad position offset %"PRIu64" lbpos %"PRIu64
-							 " mlbpos %"PRIu64"\n", offset, lbpos, mbp->lbpos);
+				    " mlbpos %"PRIu64"\n", offset, lbpos, mbp->lbpos);
 				return -1;
 			}
 			if (memcmp(mbp->magic, MARK_EOFMAGIC, MARK_MAGICLEN) == 0) {
@@ -3912,14 +3944,14 @@ istgt_lu_tape_fixed_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 			}
 			/* user data */
 			rc = istgt_lu_tape_read(spec, data + total, mbp->lblen);
-			if (rc < 0 || rc != mbp->lblen) {
-				ISTGT_ERRLOG("lu_tape_read() failed: rc %d\n", rc);
+			if (rc < 0 || (uint64_t) rc != mbp->lblen) {
+				ISTGT_ERRLOG("lu_tape_read() failed: rc %"PRId64"\n", rc);
 				return -1;
 			}
 #ifdef TAPE_DEBUG
 			ISTGT_TRACELOG(ISTGT_TRACE_LU, "read mlbpos=%"PRIu64", lblen=%"
-						   PRIu64", offset=%"PRIu64"\n",
-						   mbp->lbpos, mbp->lblen, offset);
+			    PRIu64", offset=%"PRIu64"\n",
+			    mbp->lbpos, mbp->lblen, offset);
 #endif /* TAPE_DEBUG */
 			rest = mbp->lblen;
 		}
@@ -3929,8 +3961,8 @@ istgt_lu_tape_fixed_lbread(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr 
 			/* incorrect length */
 			data_len
 				= istgt_lu_tape_build_sense_data(spec, lu_cmd->sense_data,
-												 ISTGT_SCSI_SENSE_NO_SENSE,
-												 0x00, 0x00);
+				    ISTGT_SCSI_SENSE_NO_SENSE,
+				    0x00, 0x00);
 			BSET8(&lu_cmd->sense_data[2+2], 5); /* ILI=1 */
 			//spec->info = count - u;
 			/* INFORMATION */
@@ -4000,7 +4032,8 @@ istgt_lu_tape_variable_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 	lbpos = spec->lbpos;
 	offset = spec->offset;
 	prev = spec->prev;
-	mbp = (tape_markblock_t *) lu_cmd->iobuf;
+	ASSERT_PTR_ALIGN64(lu_cmd->iobuf);
+	mbp = (tape_markblock_t *) ((uintptr_t)lu_cmd->iobuf);
 	data = (uint8_t *) lu_cmd->iobuf + marklen;
 	total = 0ULL;
 	/* header + data + EOD */
@@ -4009,12 +4042,12 @@ istgt_lu_tape_variable_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 
 #ifdef TAPE_DEBUG
 	ISTGT_TRACELOG(ISTGT_TRACE_LU, "Write: %"PRIu64" (%"PRIu64")\n",
-				   lblen, offset);
+	    lblen, offset);
 #endif /* TAPE_DEBUG */
 
 	if (request_len > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%u)\n",
-					 request_len, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%zu)\n",
+		    request_len, lu_cmd->iobufsize);
 		return -1;
 	}
 
@@ -4042,7 +4075,7 @@ istgt_lu_tape_variable_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 
 	/* DATAOUT */
 	rc = istgt_lu_tape_transfer_data(conn, lu_cmd, data,
-									 lu_cmd->iobufsize - marklen, lblen);
+	    lu_cmd->iobufsize - marklen, lblen);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_tape_transfer_data() failed\n");
 		return -1;
@@ -4063,7 +4096,7 @@ istgt_lu_tape_variable_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 	}
 #ifdef TAPE_DEBUG
 	ISTGT_TRACELOG(ISTGT_TRACE_LU, "write mlbpos=%"PRIu64", lblen=%"PRIu64
-				   ", offset=%"PRIu64"\n", mbp->lbpos, mbp->lblen, offset);
+	    ", offset=%"PRIu64"\n", mbp->lbpos, mbp->lblen, offset);
 #endif /* TAPE_DEBUG */
 	/* virtual tape mark */
 	rc = istgt_lu_tape_write_native_mark(spec, mbp);
@@ -4073,7 +4106,7 @@ istgt_lu_tape_variable_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_
 	}
 	/* user data */
 	rc = istgt_lu_tape_write(spec, data + total, lblen);
-	if (rc != lblen) {
+	if ((uint64_t) rc != lblen) {
 		ISTGT_ERRLOG("lu_tape_write() failed\n");
 		return -1;
 	}
@@ -4128,7 +4161,8 @@ istgt_lu_tape_fixed_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr
 	lbpos = spec->lbpos;
 	offset = spec->offset;
 	prev = spec->prev;
-	mbp = (tape_markblock_t *) lu_cmd->iobuf;
+	ASSERT_PTR_ALIGN64(lu_cmd->iobuf);
+	mbp = (tape_markblock_t *) ((uintptr_t)lu_cmd->iobuf);
 	data = (uint8_t *) lu_cmd->iobuf + marklen;
 	total = 0ULL;
 	/* (header + data) x N + EOD */
@@ -4137,12 +4171,12 @@ istgt_lu_tape_fixed_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr
 
 #ifdef TAPE_DEBUG
 	ISTGT_TRACELOG(ISTGT_TRACE_LU, "Write: %"PRIu64" (%"PRIu64")\n",
-				   lblen, offset);
+	    lblen, offset);
 #endif /* TAPE_DEBUG */
 
 	if (request_len > lu_cmd->iobufsize) {
-		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%u)\n",
-					 request_len, lu_cmd->iobufsize);
+		ISTGT_ERRLOG("request_len(%"PRIu64") > iobufsize(%zu)\n",
+		    request_len, lu_cmd->iobufsize);
 		return -1;
 	}
 
@@ -4170,7 +4204,7 @@ istgt_lu_tape_fixed_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr
 
 	/* DATAOUT */
 	rc = istgt_lu_tape_transfer_data(conn, lu_cmd, data,
-									 lu_cmd->iobufsize - marklen, lblen * count);
+	    lu_cmd->iobufsize - marklen, lblen * count);
 	if (rc < 0) {
 		ISTGT_ERRLOG("lu_tape_transfer_data() failed\n");
 		return -1;
@@ -4193,7 +4227,7 @@ istgt_lu_tape_fixed_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr
 	for (u = 0; u < count; u++) {
 #ifdef TAPE_DEBUG
 		ISTGT_TRACELOG(ISTGT_TRACE_LU, "write mlbpos=%"PRIu64", lblen=%"PRIu64
-					   ", offset=%"PRIu64"\n", mbp->lbpos, mbp->lblen, offset);
+		    ", offset=%"PRIu64"\n", mbp->lbpos, mbp->lblen, offset);
 #endif /* TAPE_DEBUG */
 		/* virtual tape mark */
 		rc = istgt_lu_tape_write_native_mark(spec, mbp);
@@ -4203,7 +4237,7 @@ istgt_lu_tape_fixed_lbwrite(ISTGT_LU_TAPE *spec, CONN_Ptr conn, ISTGT_LU_CMD_Ptr
 		}
 		/* user data */
 		rc = istgt_lu_tape_write(spec, data + total, lblen);
-		if (rc != lblen) {
+		if ((uint64_t) rc != lblen) {
 			ISTGT_ERRLOG("lu_tape_write() failed\n");
 			return -1;
 		}
@@ -4307,7 +4341,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	int data_alloc_len;
 	uint32_t transfer_len;
 	uint8_t *sense_data;
-	int *sense_len;
+	size_t *sense_len;
 	int rc;
 
 	if (lu_cmd == NULL)
@@ -4335,16 +4369,16 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	} else {
 		lun = 0xffffU;
 	}
-	if (lun >= lu->maxlun) {
+	if (lun >= (uint64_t) lu->maxlun) {
 #ifdef ISTGT_TRACE_TAPE
 		ISTGT_ERRLOG("LU%d: LUN%4.4"PRIx64" invalid\n",
-					 lu->num, lun);
+		    lu->num, lun);
 #endif /* ISTGT_TRACE_TAPE */
 		if (cdb[0] == SPC_INQUIRY) {
 			allocation_len = DGET16(&cdb[3]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -4356,7 +4390,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			memset(&data[1], 0, data_len - 1);
 			/* ADDITIONAL LENGTH */
 			data[4] = data_len - 5;
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			return 0;
 		} else {
@@ -4377,7 +4411,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "SCSI OP=0x%x, LUN=0x%16.16"PRIx64"\n",
-				   cdb[0], lu_cmd->lun);
+	    cdb[0], lu_cmd->lun);
 #ifdef ISTGT_TRACE_TAPE
 	if (cdb[0] != SPC_TEST_UNIT_READY) {
 		istgt_scsi_dump_cdb(cdb);
@@ -4409,21 +4443,21 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			return -1;
 		}
 		allocation_len = DGET16(&cdb[3]);
-		if (allocation_len > data_alloc_len) {
+		if (allocation_len > (size_t) data_alloc_len) {
 			ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-						 data_alloc_len);
+			    data_alloc_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			return -1;
 		}
 		memset(data, 0, allocation_len);
 		data_len = istgt_lu_tape_scsi_inquiry(spec, conn, cdb,
-											  data, data_alloc_len);
+		    data, data_alloc_len);
 		if (data_len < 0) {
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			break;
 		}
 		ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "INQUIRY", data, data_len);
-		lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+		lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 		lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		break;
 
@@ -4441,9 +4475,9 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "sel=%x\n", sel);
 
 			allocation_len = DGET32(&cdb[6]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -4455,13 +4489,13 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 			memset(data, 0, allocation_len);
 			data_len = istgt_lu_tape_scsi_report_luns(lu, conn, cdb, sel,
-													  data, data_alloc_len);
+			    data, data_alloc_len);
 			if (data_len < 0) {
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 			ISTGT_TRACEDUMP(ISTGT_TRACE_DEBUG, "REPORT LUNS", data, data_len);
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 		}
 		break;
@@ -4637,7 +4671,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			/* Data-Out */
 			rc = istgt_lu_tape_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-											 lu_cmd->iobufsize, pllen);
+			    lu_cmd->iobufsize, pllen);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_tape_transfer_data() failed\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -4685,7 +4719,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			/* Data-Out */
 			rc = istgt_lu_tape_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-											 lu_cmd->iobufsize, pllen);
+			    lu_cmd->iobufsize, pllen);
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_tape_transfer_data() failed\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -4751,7 +4785,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			subpage = cdb[3];
 
 			allocation_len = cdb[4];
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 							 data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
@@ -4761,13 +4795,15 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			data_len = istgt_lu_tape_scsi_mode_sense6(spec, conn, cdb, dbd, pc, page, subpage, data, data_alloc_len);
 			if (data_len < 0) {
+				/* INVALID FIELD IN CDB */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x24, 0x00);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 #if 0
 			istgt_dump("MODE SENSE(6)", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -4790,9 +4826,9 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			subpage = cdb[3];
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -4800,13 +4836,15 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			data_len = istgt_lu_tape_scsi_mode_sense10(spec, conn, cdb, llbaa, dbd, pc, page, subpage, data, data_alloc_len);
 			if (data_len < 0) {
+				/* INVALID FIELD IN CDB */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x24, 0x00);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
 #if 0
 			istgt_dump("MODE SENSE(10)", data, data_len);
 #endif
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -4874,9 +4912,9 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			}
 
 			allocation_len = cdb[4];
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
@@ -4893,7 +4931,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				ascq = spec->sense & 0xffU;
 			}
 			data_len = istgt_lu_tape_build_sense_data(spec, sense_data,
-													  sk, asc, ascq);
+			    sk, asc, ascq);
 			if (data_len < 0 || data_len < 2) {
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
@@ -4902,7 +4940,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			data_len -= 2;
 			memcpy(data, sense_data + 2, data_len);
 
-			lu_cmd->data_len = DMIN32(data_len, lu_cmd->transfer_len);
+			lu_cmd->data_len = DMIN32((size_t)data_len, lu_cmd->transfer_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			break;
 		}
@@ -5048,7 +5086,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			request_len += marklen;
 			/* write media check */
 			if (istgt_lu_tape_write_media_check(spec, conn, lu_cmd,
-												request_len) < 0) {
+				request_len) < 0) {
 				/* sense data build by function */
 				break;
 			}
@@ -5076,7 +5114,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			request_len += spec->offset;
 			request_len += marklen;
 			if (istgt_lu_tape_shrink_media(spec, conn, lu_cmd,
-										   request_len, data) < 0) {
+				request_len, data) < 0) {
 				ISTGT_ERRLOG("lu_tape_shrink_media() failed\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
@@ -5109,16 +5147,16 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			sa = BGET8W(&cdb[1], 4, 5);
 
 			allocation_len = DGET16(&cdb[7]);
-			if (allocation_len > data_alloc_len) {
+			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
-							 data_alloc_len);
+				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				return -1;
 			}
 			memset(data, 0, allocation_len);
 
 			data_len = istgt_lu_tape_scsi_read_position(spec, conn, lu_cmd,
-														sa, data);
+			    sa, data);
 			if (data_len != 0) {
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
@@ -5160,7 +5198,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "LOCATE %u\n", loi);
 #endif /* TAPE_DEBUG */
 			data_len = istgt_lu_tape_scsi_locate(spec, conn, lu_cmd,
-												 loi, data);
+			    loi, data);
 			if (data_len != 0) {
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
@@ -5217,17 +5255,17 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			if (fixed) {
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "READ_6 transfer %u x blocks %u SILI=%d\n",
-							   (uint32_t) lblen, (uint32_t) transfer_len,
-							   sili);
+				    "READ_6 transfer %u x blocks %u SILI=%d\n",
+				    (uint32_t) lblen, (uint32_t) transfer_len,
+				    sili);
 				rc = istgt_lu_tape_fixed_lbread(spec, conn, lu_cmd, lblen,
-												(uint32_t) transfer_len);
+				    (uint32_t) transfer_len);
 			} else {
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "READ_6 transfer %u SILI=%d\n",
-							   (uint32_t) transfer_len, sili);
+				    "READ_6 transfer %u SILI=%d\n",
+				    (uint32_t) transfer_len, sili);
 				rc = istgt_lu_tape_variable_lbread(spec, conn, lu_cmd,
-												   transfer_len);
+				    transfer_len);
 			}
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_tape_lbread() failed\n");
@@ -5273,13 +5311,13 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if (lu_cmd->data_len < request_len) {
 #ifdef TAPE_DEBUG
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "Underflow total=%u, transfer_len=%u, lblen=%u\n",
-							   lu_cmd->data_len, (uint32_t) request_len,
-							   (uint32_t) lblen);
+				    "Underflow total=%zu, transfer_len=%u, lblen=%u\n",
+				    lu_cmd->data_len, (uint32_t) request_len,
+				    (uint32_t) lblen);
 #endif /* TAPE_DEBUG */
 				/* over size? */
 				if (rest > spec->size
-					|| spec->offset > spec->size - rest) {
+				    || spec->offset > spec->size - rest) {
 					spec->eom = 1;
 					/* END-OF-PARTITION/MEDIUM DETECTED */
 					BUILD_SENSE(MEDIUM_ERROR, 0x00, 0x02);
@@ -5324,7 +5362,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			data_len = istgt_lu_tape_build_sense_media(spec, sense_data);
 			if (data_len != 0) {
 				rc = istgt_lu_tape_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-												 lu_cmd->iobufsize, request_len);
+				    lu_cmd->iobufsize, request_len);
 				if (rc < 0) {
 					ISTGT_ERRLOG("lu_tape_transfer_data() failed\n");
 					lu_cmd->data_len = 0;
@@ -5339,7 +5377,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			istgt_lu_tape_prepare_offset(spec, conn, lu_cmd);
 			if (spec->eom) {
 				rc = istgt_lu_tape_transfer_data(conn, lu_cmd, lu_cmd->iobuf,
-												 lu_cmd->iobufsize, request_len);
+				    lu_cmd->iobufsize, request_len);
 				if (rc < 0) {
 					ISTGT_ERRLOG("lu_tape_transfer_data() failed\n");
 					lu_cmd->data_len = 0;
@@ -5357,17 +5395,17 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 			if (fixed) {
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "WRITE_6 transfer %u x blocks %u SILI=%d\n",
-							   (uint32_t) lblen, (uint32_t) transfer_len,
-							   sili);
+				    "WRITE_6 transfer %u x blocks %u SILI=%d\n",
+				    (uint32_t) lblen, (uint32_t) transfer_len,
+				    sili);
 				rc = istgt_lu_tape_fixed_lbwrite(spec, conn, lu_cmd, lblen,
-												 (uint32_t) transfer_len);
+				    (uint32_t) transfer_len);
 			} else {
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "WRITE_6 transfer %u SILI=%d\n",
-							   (uint32_t) transfer_len, sili);
+				    "WRITE_6 transfer %u SILI=%d\n",
+				    (uint32_t) transfer_len, sili);
 				rc = istgt_lu_tape_variable_lbwrite(spec, conn, lu_cmd,
-													transfer_len);
+				    transfer_len);
 			}
 			if (rc < 0) {
 				ISTGT_ERRLOG("lu_tape_lbwrite() failed\n");
@@ -5385,7 +5423,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if (spec->ctlblock->marks[index_i + 1].offset != MARK_END) {
 #ifdef TAPE_DEBUG
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "save ctlblock and write EOD\n");
+				    "save ctlblock and write EOD\n");
 #endif /* TAPE_DEBUG */
 				spec->ctlblock->marks[index_i + 1].offset = MARK_END;
 				spec->ctlblock->marks[index_i + 1].lbpos = MARK_END;
@@ -5400,7 +5438,7 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				}
 				request_len = spec->ctlblock->marklen;
 				if (istgt_lu_tape_write_media_check(spec, conn, lu_cmd,
-													request_len) < 0) {
+					request_len) < 0) {
 					goto write_failure;
 				}
 				if (istgt_lu_tape_write_eod(spec, lu_cmd->data) < 0) {
@@ -5423,9 +5461,9 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if (lu_cmd->data_len < request_len) {
 #ifdef TAPE_DEBUG
 				ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-							   "Underflow total=%u, transfer_len=%u, lblen=%u\n",
-							   lu_cmd->data_len, (uint32_t) request_len,
-							   (uint32_t) lblen);
+				    "Underflow total=%zu, transfer_len=%u, lblen=%u\n",
+				    lu_cmd->data_len, (uint32_t) request_len,
+				    (uint32_t) lblen);
 #endif /* TAPE_DEBUG */
 				spec->eom = 1;
 				/* WRITE ERROR */
@@ -5467,8 +5505,8 @@ istgt_lu_tape_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-				   "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
-				   " complete\n",
-				   cdb[0], lu_cmd->lun, lu_cmd->status);
+	    "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
+	    " complete\n",
+	    cdb[0], lu_cmd->lun, lu_cmd->status);
 	return 0;
 }

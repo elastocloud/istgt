@@ -220,6 +220,22 @@ istgt_close_log(void)
 }
 
 void
+istgtcontrol_open_log(void)
+{
+	if (g_log_facility != 0) {
+		openlog("istgtcontrol", LOG_PID, g_log_facility);
+	} else {
+		openlog("istgtcontrol", LOG_PID, ISTGT_LOG_FACILITY);
+	}
+}
+
+void
+istgtcontrol_close_log(void)
+{
+	closelog();
+}
+
+void
 istgt_set_trace_flag(int flag)
 {
 	if (flag == ISTGT_TRACE_NONE) {

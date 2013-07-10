@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,6 +41,7 @@
 #include <netinet/tcp.h>
 
 #include "istgt.h"
+#include "istgt_log.h"
 #include "istgt_sock.h"
 #include "istgt_misc.h"
 
@@ -54,6 +55,11 @@
 #define AI_NUMERICSERV 0
 #endif
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
 int
 istgt_getaddr(int sock, char *saddr, int slen, char *caddr, int clen)
 {
@@ -65,11 +71,13 @@ istgt_getaddr(int sock, char *saddr, int slen, char *caddr, int clen)
 	salen = sizeof sa;
 	rc = getsockname(sock, (struct sockaddr *) &sa, &salen);
 	if (rc != 0) {
+		ISTGT_ERRLOG("getsockname() failed (errno=%d)\n", errno);
 		return -1;
 	}
 	rc = getnameinfo((struct sockaddr *) &sa, salen,
-					 saddr, slen, NULL, 0, NI_NUMERICHOST);
+	    saddr, slen, NULL, 0, NI_NUMERICHOST);
 	if (rc != 0) {
+		ISTGT_ERRLOG("getnameinfo() failed (errno=%d)\n", errno);
 		return -1;
 	}
 
@@ -77,11 +85,13 @@ istgt_getaddr(int sock, char *saddr, int slen, char *caddr, int clen)
 	salen = sizeof sa;
 	rc = getpeername(sock, (struct sockaddr *) &sa, &salen);
 	if (rc != 0) {
+		ISTGT_ERRLOG("getpeername() failed (errno=%d)\n", errno);
 		return -1;
 	}
 	rc = getnameinfo((struct sockaddr *) &sa, salen,
-					 caddr, clen, NULL, 0, NI_NUMERICHOST);
+	    caddr, clen, NULL, 0, NI_NUMERICHOST);
 	if (rc != 0) {
+		ISTGT_ERRLOG("getnameinfo() failed (errno=%d)\n", errno);
 		return -1;
 	}
 
@@ -126,6 +136,7 @@ istgt_listen(const char *ip, int port)
 	hints.ai_flags |= AI_NUMERICHOST;
 	rc = getaddrinfo(ip, portnum, &hints, &res0);
 	if (rc != 0) {
+		ISTGT_ERRLOG("getaddrinfo() failed (errno=%d)\n", errno);
 		return -1;
 	}
 
@@ -214,6 +225,7 @@ istgt_connect(const char *host, int port)
 	hints.ai_flags = AI_NUMERICSERV;
 	rc = getaddrinfo(host, portnum, &hints, &res0);
 	if (rc != 0) {
+		ISTGT_ERRLOG("getaddrinfo() failed (errno=%d)\n", errno);
 		return -1;
 	}
 
@@ -285,6 +297,19 @@ istgt_set_sendtimeout(int s, int msec)
 	return 0;
 }
 
+int
+istgt_set_recvlowat(int s, int nbytes)
+{
+	int val;
+	int rc;
+
+	val = nbytes;
+	rc = setsockopt(s, SOL_SOCKET, SO_RCVLOWAT, &val, sizeof val);
+	if (rc != 0)
+		return -1;
+	return 0;
+}
+
 #ifdef USE_POLLWAIT
 static int
 can_read_socket(int s, int msec)
@@ -339,8 +364,14 @@ can_write_socket(int s, int msec)
 }
 #endif /* USE_POLLWAIT */
 
+#ifdef USE_POLLWAIT
+#define UNUSED_POLLWAIT(x) x
+#else
+#define UNUSED_POLLWAIT(x) x __attribute__((__unused__))
+#endif
+
 ssize_t
-istgt_read_socket(int s, void *buf, size_t nbytes, int timeout)
+istgt_read_socket(int s, void *buf, size_t nbytes, int UNUSED_POLLWAIT(timeout))
 {
 	ssize_t n;
 #ifdef USE_POLLWAIT
@@ -387,7 +418,7 @@ istgt_read_socket(int s, void *buf, size_t nbytes, int timeout)
 }
 
 ssize_t
-istgt_write_socket(int s, const void *buf, size_t nbytes, int timeout)
+istgt_write_socket(int s, const void *buf, size_t nbytes, int UNUSED_POLLWAIT(timeout))
 {
 	ssize_t n;
 #ifdef USE_POLLWAIT

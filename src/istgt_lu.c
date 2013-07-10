@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -82,8 +82,8 @@ istgt_lu_allow_ipv6(const char *netmask, const char *addr)
 	struct in6_addr in6_addr;
 	char mask[MAX_MASKBUF];
 	const char *p;
+	size_t n;
 	int bits, bmask;
-	int n;
 	int i;
 
 	if (netmask[0] != '[')
@@ -141,8 +141,8 @@ istgt_lu_allow_ipv4(const char *netmask, const char *addr)
 	char mask[MAX_MASKBUF];
 	const char *p;
 	uint32_t bmask;
+	size_t n;
 	int bits;
-	int n;
 
 	p = strchr(netmask, '/');
 	if (p == NULL) {
@@ -320,6 +320,54 @@ istgt_lu_visible(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu, const char *iqn, int pg_tag)
 	return 0;
 }
 
+static int
+istgt_pg_visible(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu, const char *iqn, int pg_tag)
+{
+	INITIATOR_GROUP *igp;
+	int match_idx;
+	int ig_tag;
+	int i, j;
+
+	if (istgt == NULL || lu == NULL || iqn == NULL)
+		return 0;
+	match_idx = -1;
+	for (i = 0; i < lu->maxmap; i++) {
+		if (lu->map[i].pg_tag == pg_tag) {
+			match_idx = i;
+			break;
+		}
+	}
+	if (match_idx < 0) {
+		/* cant't find pg_tag */
+		return 0;
+	}
+
+	/* iqn is initiator group? */
+	ig_tag = lu->map[match_idx].ig_tag;
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "iqn=%s, pg=%d, ig=%d\n", iqn, pg_tag, ig_tag);
+	igp = istgt_lu_find_initiatorgroup(istgt, ig_tag);
+	if (igp == NULL) {
+		ISTGT_ERRLOG("LU%d: ig_tag not found\n", lu->num);
+		return 0;
+	}
+	for (j = 0; j < igp->ninitiators; j++) {
+		if (igp->initiators[j][0] == '!'
+		    && (strcasecmp(&igp->initiators[j][1], "ALL") == 0
+			|| strcasecmp(&igp->initiators[j][1], iqn) == 0)) {
+			/* NG */
+			return 0;
+		}
+		if (strcasecmp(igp->initiators[j], "ALL") == 0
+		    || strcasecmp(igp->initiators[j], iqn) == 0) {
+			/* OK iqn, no check addr */
+			return 1;
+		}
+	}
+
+	/* NG */
+	return 0;
+}
+
 int
 istgt_lu_sendtargets(CONN_Ptr conn, const char *iiqn, const char *iaddr, const char *tiqn, uint8_t *data, int alloc_len, int data_len)
 {
@@ -331,7 +379,7 @@ istgt_lu_sendtargets(CONN_Ptr conn, const char *iiqn, const char *iaddr, const c
 	int len;
 	int rc;
 	int pg_tag;
-	int i, j, k;
+	int i, j, k, l;
 
 	if (conn == NULL)
 		return 0;
@@ -391,15 +439,26 @@ istgt_lu_sendtargets(CONN_Ptr conn, const char *iiqn, const char *iaddr, const c
 					goto skip_pg_tag;
 				}
 			}
+			rc = istgt_pg_visible(istgt, lu, iiqn, pg_tag);
+			if (rc == 0) {
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				    "SKIP pg=%d, iqn=%s for %s from %s (%s)\n",
+				    pg_tag, tiqn, lu->name, iiqn, iaddr);
+				goto skip_pg_tag;
+			}
+
 			/* write to data */
-			for (k = 0; k < istgt->nportal; k++) {
-				if (istgt->portal[k].tag == pg_tag) {
+			for (k = 0; k < istgt->nportal_group; k++) {
+				if (istgt->portal_group[k].tag != pg_tag)
+					continue;
+				for (l = 0; l < istgt->portal_group[k].nportals; l++) {
 					if (alloc_len - total < 1) {
 						MTX_UNLOCK(&istgt->mutex);
-						ISTGT_ERRLOG("data space small %d\n", alloc_len);
+						ISTGT_ERRLOG("data space small %d\n",
+						    alloc_len);
 						return total;
 					}
-					host = istgt->portal[k].host;
+					host = istgt->portal_group[k].portals[l]->host;
 					/* wildcard? */
 					if (strcasecmp(host, "[::]") == 0
 					    || strcasecmp(host, "[*]") == 0
@@ -425,14 +484,14 @@ istgt_lu_sendtargets(CONN_Ptr conn, const char *iiqn, const char *iaddr, const c
 					ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 					    "TargetAddress=%s:%s,%d\n",
 					    host,
-					    istgt->portal[k].port,
-					    istgt->portal[k].tag);
+					    istgt->portal_group[k].portals[l]->port,
+					    istgt->portal_group[k].portals[l]->tag);
 					len = snprintf((char *) data + total,
 					    alloc_len - total,
 					    "TargetAddress=%s:%s,%d",
 					    host,
-					    istgt->portal[k].port,
-					    istgt->portal[k].tag);
+					    istgt->portal_group[k].portals[l]->port,
+					    istgt->portal_group[k].portals[l]->tag);
 					total += len + 1;
 				}
 			}
@@ -606,7 +665,11 @@ istgt_lu_get_devsize(const char *file)
 	int rc;
 
 	val = 0ULL;
+#ifdef ALLOW_SYMLINK_DEVICE
+	rc = stat(file, &st);
+#else
 	rc = lstat(file, &st);
+#endif /* ALLOW_SYMLINK_DEVICE */
 	if (rc != 0)
 		return val;
 	if (!S_ISCHR(st.st_mode) && !S_ISBLK(st.st_mode))
@@ -689,11 +752,18 @@ istgt_lu_get_filesize(const char *file)
 	int rc;
 
 	val = 0ULL;
+#ifdef ALLOW_SYMLINK_DEVICE
+	rc = stat(file, &st);
+#else
 	rc = lstat(file, &st);
+#endif /* ALLOW_SYMLINK_DEVICE */
+
 	if (rc < 0)
 		return val;
+#ifndef ALLOW_SYMLINK_DEVICE
 	if (S_ISLNK(st.st_mode))
 		return val;
+#endif /* ALLOW_SYMLINK_DEVICE */
 
 	if (S_ISCHR(st.st_mode)) {
 		val = istgt_lu_get_devsize(file);
@@ -702,7 +772,11 @@ istgt_lu_get_filesize(const char *file)
 	} else if (S_ISREG(st.st_mode)) {
 		val = st.st_size;
 	} else {
+#ifdef ALLOW_SYMLINK_DEVICE
+		ISTGT_ERRLOG("stat is neither REG, CHR nor BLK\n");
+#else
 		ISTGT_ERRLOG("lstat is neither REG, CHR nor BLK\n");
+#endif /* ALLOW_SYMLINK_DEVICE */
 		val = 0ULL;
 	}
 	return val;
@@ -850,16 +924,16 @@ istgt_lu_parse_media_size(const char *file, const char *size, int *flags)
 	return msize;
 }
 
-PORTAL *
+PORTAL_GROUP *
 istgt_lu_find_portalgroup(ISTGT_Ptr istgt, int tag)
 {
-	PORTAL *pp;
+	PORTAL_GROUP *pgp;
 	int i;
 
-	for (i = 0; i < istgt->nportal; i++) {
-		if (istgt->portal[i].tag == tag) {
-			pp = &istgt->portal[i];
-			return pp;
+	for (i = 0; i < istgt->nportal_group; i++) {
+		if (istgt->portal_group[i].tag == tag) {
+			pgp = &istgt->portal_group[i];
+			return pgp;
 		}
 	}
 	return NULL;
@@ -922,6 +996,7 @@ istgt_lu_check_iscsi_name(const char *name)
 	return 0;
 }
 
+#if 0
 static uint64_t
 istgt_lu_get_nbserial(const char *nodebase)
 {
@@ -955,6 +1030,7 @@ istgt_lu_get_nbserial(const char *nodebase)
 	}
 	return nbs;
 }
+#endif
 
 static int
 istgt_lu_set_local_settings(ISTGT_Ptr istgt, CF_SECTION *sp, ISTGT_LU_Ptr lu)
@@ -1206,13 +1282,15 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 {
 	char buf[MAX_TMPBUF], buf2[MAX_TMPBUF];
 	ISTGT_LU_Ptr lu;
+	PORTAL_GROUP *pgp;
+	INITIATOR_GROUP *igp;
 	const char *vendor, *product, *revision, *serial;
 	const char *pg_tag, *ig_tag;
 	const char *ag_tag;
 	const char *flags, *file, *size;
 	const char *key, *val;
 	uint64_t msize;
-	uint64_t nbs64;
+	//uint64_t nbs64;
 	int pg_tag_i, ig_tag_i;
 	int ag_tag_i;
 	int rpm, formfactor;
@@ -1237,10 +1315,10 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 	memset(lu, 0, sizeof *lu);
 	lu->num = sp->num;
 	lu->istgt = istgt;
-	istgt_lu_set_state(lu, ISTGT_STATE_INVALID);
-	nbs64 = istgt_lu_get_nbserial(istgt->nodebase);
+	lu->state = ISTGT_STATE_INVALID;
 #if 0
 	/* disabled now */
+	nbs64 = istgt_lu_get_nbserial(istgt->nodebase);
 	nbs = (int) (nbs64 % 900) * 100000;
 #else
 	nbs = 0;
@@ -1319,16 +1397,24 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 				ISTGT_ERRLOG("LU%d: invalid group tag\n", lu->num);
 				goto error_return;
 			}
-			if (istgt_lu_find_portalgroup(istgt, pg_tag_i) == NULL) {
+			MTX_LOCK(&istgt->mutex);
+			pgp = istgt_lu_find_portalgroup(istgt, pg_tag_i);
+			if (pgp == NULL) {
+				MTX_UNLOCK(&istgt->mutex);
 				ISTGT_ERRLOG("LU%d: PortalGroup%d not found\n",
 							 lu->num, pg_tag_i);
 				goto error_return;
 			}
-			if (istgt_lu_find_initiatorgroup(istgt, ig_tag_i) == NULL) {
+			igp = istgt_lu_find_initiatorgroup(istgt, ig_tag_i);
+			if (igp == NULL) {
+				MTX_UNLOCK(&istgt->mutex);
 				ISTGT_ERRLOG("LU%d: InitiatorGroup%d not found\n",
 				    lu->num, ig_tag_i);
 				goto error_return;
 			}
+			pgp->ref++;
+			igp->ref++;
+			MTX_UNLOCK(&istgt->mutex);
 			lu->map[i].pg_tag = pg_tag_i;
 			lu->map[i].pg_aas = AAS_ACTIVE_OPTIMIZED;
 			//lu->map[i].pg_aas = AAS_ACTIVE_NON_OPTIMIZED;
@@ -1403,7 +1489,8 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 				goto error_return;
 			}
 			if (ag_tag_i == 0) {
-				ISTGT_ERRLOG("LU%d: invalid auth group %d\n", ag_tag_i);
+				ISTGT_ERRLOG("LU%d: invalid auth group %d\n", lu->num,
+				    ag_tag_i);
 				goto error_return;
 			}
 		}
@@ -1586,7 +1673,7 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 		lu->queue_depth = (int) strtol(val, NULL, 10);
 	}
 	if (lu->queue_depth < 0 || lu->queue_depth >= MAX_LU_QUEUE_DEPTH) {
-		ISTGT_ERRLOG("LU%d: queue depth range error\n");
+		ISTGT_ERRLOG("LU%d: queue depth range error\n", lu->num);
 		goto error_return;
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "QueueDepth %d\n",
@@ -1882,7 +1969,16 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 		xfree(lu->tsih[i].initiator_port);
 	}
 	for (i = 0; i < lu->maxmap; i++) {
-		/* nothing */
+		pg_tag_i = lu->map[i].pg_tag;
+		ig_tag_i = lu->map[i].ig_tag;
+		MTX_LOCK(&istgt->mutex);
+		pgp = istgt_lu_find_portalgroup(istgt, pg_tag_i);
+		igp = istgt_lu_find_initiatorgroup(istgt, ig_tag_i);
+		if (pgp != NULL && igp != NULL) {
+			pgp->ref--;
+			igp->ref--;
+		}
+		MTX_UNLOCK(&istgt->mutex);
 	}
 
 	xfree(lu);
@@ -1892,16 +1988,19 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 static int
 istgt_lu_del_unit(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 {
+	PORTAL_GROUP *pgp;
+	INITIATOR_GROUP *igp;
+	int pg_tag_i, ig_tag_i;
 	int i, j;
 
 	if (lu ==NULL)
 		return 0;
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "del unit %d\n", lu->num);
 
-	MTX_LOCK(&istgt->mutex);
+	//MTX_LOCK(&istgt->mutex);
 	istgt->nlogical_unit--;
 	istgt->logical_unit[lu->num] = NULL;
-	MTX_UNLOCK(&istgt->mutex);
+	//MTX_UNLOCK(&istgt->mutex);
 
 	xfree(lu->name);
 	xfree(lu->alias);
@@ -1935,13 +2034,91 @@ istgt_lu_del_unit(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 		xfree(lu->tsih[i].initiator_port);
 	}
 	for (i = 0; i < lu->maxmap; i++) {
-		/* nothing */
+		pg_tag_i = lu->map[i].pg_tag;
+		ig_tag_i = lu->map[i].ig_tag;
+		//MTX_LOCK(&istgt->mutex);
+		pgp = istgt_lu_find_portalgroup(istgt, pg_tag_i);
+		igp = istgt_lu_find_initiatorgroup(istgt, ig_tag_i);
+		if (pgp != NULL && igp != NULL) {
+			pgp->ref--;
+			igp->ref--;
+		}
+		//MTX_UNLOCK(&istgt->mutex);
 	}
 
 	return 0;
 }
 
 static void *luworker(void *arg);
+
+static int istgt_lu_init_unit(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+{
+	int rc;
+
+	rc = pthread_mutex_init(&lu->mutex, NULL);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
+		return -1;
+	}
+	rc = pthread_mutex_init(&lu->state_mutex, &istgt->mutex_attr);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
+		return -1;
+	}
+	rc = pthread_mutex_init(&lu->queue_mutex, &istgt->mutex_attr);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
+		return -1;
+	}
+	rc = pthread_cond_init(&lu->queue_cond, NULL);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: cond_init() failed\n", lu->num);
+		return -1;
+	}
+
+	switch (lu->type) {
+	case ISTGT_LU_TYPE_PASS:
+		rc = istgt_lu_pass_init(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_pass_init() failed\n", lu->num);
+			return -1;
+		}
+		break;
+
+	case ISTGT_LU_TYPE_DISK:
+		rc = istgt_lu_disk_init(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_disk_init() failed\n", lu->num);
+			return -1;
+		}
+		break;
+
+	case ISTGT_LU_TYPE_DVD:
+		rc = istgt_lu_dvd_init(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_dvd_init() failed\n", lu->num);
+			return -1;
+		}
+		break;
+
+	case ISTGT_LU_TYPE_TAPE:
+		rc = istgt_lu_tape_init(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_tape_init() failed\n", lu->num);
+			return -1;
+		}
+		break;
+
+	case ISTGT_LU_TYPE_NONE:
+		//ISTGT_ERRLOG("LU%d: dummy type\n", lu->num);
+		break;
+	default:
+		ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
+		return -1;
+	}
+
+	return 0;
+}
 
 int
 istgt_lu_init(ISTGT_Ptr istgt)
@@ -1978,76 +2155,299 @@ istgt_lu_init(ISTGT_Ptr istgt)
 		sp = sp->next;
 	}
 
+	MTX_LOCK(&istgt->mutex);
 	for (i = 0; i < MAX_LOGICAL_UNIT; i++) {
 		lu = istgt->logical_unit[i];
 		if (lu == NULL)
 			continue;
-
-		rc = pthread_mutex_init(&lu->mutex, NULL);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
+		rc = istgt_lu_init_unit(istgt, lu);
+		if (rc < 0) {
+			MTX_UNLOCK(&istgt->mutex);
+			ISTGT_ERRLOG("LU%d: lu_init_unit() failed\n", lu->num);
 			return -1;
 		}
-		rc = pthread_mutex_init(&lu->state_mutex, NULL);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
-			return -1;
-		}
-		rc = pthread_mutex_init(&lu->queue_mutex, NULL);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: mutex_init() failed\n", lu->num);
-			return -1;
-		}
-		rc = pthread_cond_init(&lu->queue_cond, NULL);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: cond_init() failed\n", lu->num);
-			return -1;
-		}
-
-		switch (lu->type) {
-		case ISTGT_LU_TYPE_PASS:
-			rc = istgt_lu_pass_init(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_pass_init() failed\n", lu->num);
-				return -1;
-			}
-			break;
-
-		case ISTGT_LU_TYPE_DISK:
-			rc = istgt_lu_disk_init(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_disk_init() failed\n", lu->num);
-				return -1;
-			}
-			break;
-
-		case ISTGT_LU_TYPE_DVD:
-			rc = istgt_lu_dvd_init(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_dvd_init() failed\n", lu->num);
-				return -1;
-			}
-			break;
-
-		case ISTGT_LU_TYPE_TAPE:
-			rc = istgt_lu_tape_init(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_tape_init() failed\n", lu->num);
-				return -1;
-			}
-			break;
-
-		case ISTGT_LU_TYPE_NONE:
-			//ISTGT_ERRLOG("LU%d: dummy type\n", lu->num);
-			break;
-		default:
-			ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
-			return -1;
-		}
-
 		istgt_lu_set_state(lu, ISTGT_STATE_INITIALIZED);
 	}
+	MTX_UNLOCK(&istgt->mutex);
 
+	return 0;
+}
+
+static int
+istgt_lu_exist_num(CONFIG *config, int num)
+{
+	CF_SECTION *sp;
+
+	sp = config->section;
+	while (sp != NULL) {
+		if (sp->type == ST_LOGICAL_UNIT) {
+			if (sp->num == num) {
+				return 1;
+			}
+		}
+		sp = sp->next;
+	}
+	return -1;
+}
+
+static int istgt_lu_shutdown_unit(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
+
+int
+istgt_lu_reload_delete(ISTGT_Ptr istgt)
+{
+	ISTGT_LU_Ptr lu;
+	int warn_num, warn_msg;
+	int rc;
+	int i;
+
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "istgt_lu_reload_delete\n");
+	warn_num = warn_msg = 0;
+retry:
+	MTX_LOCK(&istgt->mutex);
+	for (i = 0; i < MAX_LOGICAL_UNIT; i++) {
+		lu = istgt->logical_unit[i];
+		if (lu == NULL)
+			continue;
+		rc = istgt_lu_exist_num(istgt->config, lu->num);
+		if (rc < 0) {
+			istgt_lu_set_state(lu, ISTGT_STATE_SHUTDOWN);
+			MTX_LOCK(&lu->mutex);
+			if (lu->maxtsih > 1) {
+				if (!warn_msg) {
+					warn_msg = 1;
+					ISTGT_WARNLOG("It is recommended that you disconnect the target before deletion.\n");
+				}
+				if (warn_num != lu->num) {
+					warn_num = lu->num;
+					ISTGT_WARNLOG("delete request for active LU%d\n",
+					    lu->num);
+				}
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "reload retry for LU%d\n",
+				    lu->num);
+				MTX_UNLOCK(&lu->mutex);
+				MTX_UNLOCK(&istgt->mutex);
+				istgt_yield();
+				sleep(1);
+				goto retry;
+			}
+			MTX_UNLOCK(&lu->mutex);
+			rc = istgt_lu_shutdown_unit(istgt, lu);
+			if (rc < 0) {
+				ISTGT_ERRLOG("LU%d: lu_shutdown_unit() failed\n", lu->num);
+				/* ignore error */
+			}
+			ISTGT_NOTICELOG("delete LU%d: Name=%s\n", lu->num, lu->name);
+			xfree(lu);
+			istgt->logical_unit[i] = NULL;
+		}
+	}
+	MTX_UNLOCK(&istgt->mutex);
+	return 0;
+}
+
+static int
+istgt_lu_match_all(CF_SECTION *sp, CONFIG *config_old)
+{
+	CF_ITEM *ip, *ip_old;
+	CF_VALUE *vp, *vp_old;
+	CF_SECTION *sp_old;
+
+	sp_old = istgt_find_cf_section(config_old, sp->name);
+	if (sp_old == NULL)
+		return 0;
+
+	ip = sp->item;
+	ip_old = sp_old->item;
+	while (ip != NULL && ip_old != NULL) {
+		vp = ip->val;
+		vp_old = ip_old->val;
+		while (vp != NULL && vp_old != NULL) {
+			if (vp->value != NULL && vp_old->value != NULL) {
+				if (strcmp(vp->value, vp_old->value) != 0)
+					return 0;
+			} else {
+				return 0;
+			}
+			vp = vp->next;
+			vp_old = vp_old->next;
+		}
+		if (vp != NULL || vp_old != NULL)
+			return 0;
+		ip = ip->next;
+		ip_old = ip_old->next;
+	}
+	if (ip != NULL || ip_old != NULL)
+		return 0;
+	return 1;
+}
+
+static int
+istgt_lu_copy_sp(CF_SECTION *sp, CONFIG *config_old)
+{
+	CF_SECTION *sp_old;
+
+	sp_old = istgt_find_cf_section(config_old, sp->name);
+	if (sp_old == NULL)
+		return -1;
+	istgt_copy_cf_item(sp, sp_old);
+	return 0;
+}
+
+static int istgt_lu_create_thread(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
+
+int
+istgt_lu_reload_update(ISTGT_Ptr istgt)
+{
+	ISTGT_LU_Ptr lu;
+	ISTGT_LU_Ptr lu_old;
+	CF_SECTION *sp;
+	int rc;
+
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "istgt_lu_reload_update\n");
+
+	sp = istgt->config->section;
+	while (sp != NULL) {
+		if (sp->type == ST_LOGICAL_UNIT) {
+			if (sp->num == 0) {
+				ISTGT_ERRLOG("Unit 0 is invalid\n");
+				goto skip_lu;
+			}
+			if (sp->num > ISTGT_LU_TAG_MAX) {
+				ISTGT_ERRLOG("tag %d is invalid\n", sp->num);
+				goto skip_lu;
+			}
+#if 0
+			rc = istgt_lu_exist_num(istgt->config_old, sp->num);
+#else
+			rc = -1;
+			MTX_LOCK(&istgt->mutex);
+			lu = istgt->logical_unit[sp->num];
+			if (lu != NULL)
+				rc = 1;
+			MTX_UNLOCK(&istgt->mutex);
+#endif
+			if (rc < 0) {
+				rc = istgt_lu_add_unit(istgt, sp);
+				if (rc < 0) {
+					ISTGT_ERRLOG("lu_add_unit() failed\n");
+					goto skip_lu;
+				}
+				MTX_LOCK(&istgt->mutex);
+				lu = istgt->logical_unit[sp->num];
+				if (lu == NULL) {
+					MTX_UNLOCK(&istgt->mutex);
+					ISTGT_ERRLOG("can't find new LU%d\n", sp->num);
+					goto skip_lu;
+				}
+				rc = istgt_lu_init_unit(istgt, lu);
+				if (rc < 0) {
+					MTX_UNLOCK(&istgt->mutex);
+					ISTGT_ERRLOG("LU%d: lu_init_unit() failed\n", sp->num);
+					goto skip_lu;
+				}
+				istgt_lu_set_state(lu, ISTGT_STATE_INITIALIZED);
+
+				rc = istgt_lu_create_thread(istgt, lu);
+				if (rc < 0) {
+					MTX_UNLOCK(&istgt->mutex);
+					ISTGT_ERRLOG("lu_create_thread() failed\n");
+					goto skip_lu;
+				}
+				istgt_lu_set_state(lu, ISTGT_STATE_RUNNING);
+				ISTGT_NOTICELOG("add LU%d: Name=%s\n", lu->num, lu->name);
+				MTX_UNLOCK(&istgt->mutex);
+			} else {
+				if (istgt_lu_match_all(sp, istgt->config_old)) {
+					ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+					    "skip LU%d: Name=%s\n", lu->num, lu->name);
+				} else {
+					MTX_LOCK(&istgt->mutex);
+					lu = istgt->logical_unit[sp->num];
+					if (lu == NULL) {
+						MTX_UNLOCK(&istgt->mutex);
+						ISTGT_ERRLOG("can't find LU%d\n", sp->num);
+						goto skip_lu;
+					}
+					MTX_LOCK(&lu->mutex);
+					if (lu->maxtsih > 1) {
+						ISTGT_ERRLOG("update active LU%d: Name=%s, "
+						    "# of TSIH=%d\n",
+						    lu->num, lu->name, lu->maxtsih - 1);
+						rc = istgt_lu_copy_sp(sp, istgt->config_old);
+						if (rc < 0) {
+							/* ignore error */
+						}
+						MTX_UNLOCK(&lu->mutex);
+						MTX_UNLOCK(&istgt->mutex);
+						goto skip_lu;
+					} else {
+						istgt->logical_unit[sp->num] = NULL;
+						MTX_UNLOCK(&lu->mutex);
+						MTX_UNLOCK(&istgt->mutex);
+
+						/* add new LU */
+						rc = istgt_lu_add_unit(istgt, sp);
+						if (rc < 0) {
+							ISTGT_ERRLOG("lu_add_unit() failed\n");
+							MTX_LOCK(&istgt->mutex);
+							istgt->logical_unit[sp->num] = lu;
+							MTX_UNLOCK(&istgt->mutex);
+							goto skip_lu;
+						} else {
+							/* delete old LU */
+							lu_old = lu;
+							MTX_LOCK(&istgt->mutex);
+							lu = istgt->logical_unit[sp->num];
+							istgt_lu_set_state(lu_old,
+							    ISTGT_STATE_SHUTDOWN);
+							rc = istgt_lu_shutdown_unit(istgt,
+							    lu_old);
+							if (rc < 0) {
+								ISTGT_ERRLOG(
+									"LU%d: lu_shutdown_unit() "
+									"failed\n", lu->num);
+								/* ignore error */
+							}
+							xfree(lu_old);
+							istgt->logical_unit[sp->num] = lu;
+							MTX_UNLOCK(&istgt->mutex);
+						}
+						MTX_LOCK(&istgt->mutex);
+						lu = istgt->logical_unit[sp->num];
+						if (lu == NULL) {
+							MTX_UNLOCK(&istgt->mutex);
+							ISTGT_ERRLOG("can't find new LU%d\n",
+							    sp->num);
+							goto skip_lu;
+						}
+						rc = istgt_lu_init_unit(istgt, lu);
+						if (rc < 0) {
+							MTX_UNLOCK(&istgt->mutex);
+							ISTGT_ERRLOG("LU%d: lu_init_unit() "
+							    "failed\n", sp->num);
+							goto skip_lu;
+						}
+						istgt_lu_set_state(lu,
+						    ISTGT_STATE_INITIALIZED);
+
+						rc = istgt_lu_create_thread(istgt, lu);
+						if (rc < 0) {
+							MTX_UNLOCK(&istgt->mutex);
+							ISTGT_ERRLOG("lu_create_thread "
+							    "failed\n");
+							goto skip_lu;
+						}
+						istgt_lu_set_state(lu, ISTGT_STATE_RUNNING);
+						ISTGT_NOTICELOG("update LU%d: Name=%s\n",
+						    lu->num, lu->name);
+					}
+					MTX_UNLOCK(&istgt->mutex);
+				}
+			}
+		}
+	skip_lu:
+		sp = sp->next;
+	}
 	return 0;
 }
 
@@ -2068,12 +2468,45 @@ istgt_lu_set_all_state(ISTGT_Ptr istgt, ISTGT_STATE state)
 	return 0;
 }
 
-int
-istgt_lu_create_threads(ISTGT_Ptr istgt)
+static int
+istgt_lu_create_thread(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 {
 #ifdef HAVE_PTHREAD_SET_NAME_NP
 	char buf[MAX_TMPBUF];
 #endif
+	int rc;
+
+	if (lu->queue_depth != 0) {
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "thread for LU%d\n", lu->num);
+		/* create LU thread */
+#ifdef ISTGT_STACKSIZE
+		rc = pthread_create(&lu->thread, &istgt->attr, &luworker, (void *)lu);
+#else
+		rc = pthread_create(&lu->thread, NULL, &luworker, (void *)lu);
+#endif
+		if (rc != 0) {
+			ISTGT_ERRLOG("pthread_create() failed\n");
+			return -1;
+		}
+#if 0
+		rc = pthread_detach(lu->thread);
+		if (rc != 0) {
+			ISTGT_ERRLOG("pthread_detach() failed\n");
+			return -1;
+		}
+#endif
+#ifdef HAVE_PTHREAD_SET_NAME_NP
+		snprintf(buf, sizeof buf, "luthread #%d", lu->num);
+		pthread_set_name_np(lu->thread, buf);
+#endif
+	}
+
+	return 0;
+}
+
+int
+istgt_lu_create_threads(ISTGT_Ptr istgt)
+{
 	ISTGT_LU_Ptr lu;
 	int rc;
 	int i;
@@ -2084,30 +2517,97 @@ istgt_lu_create_threads(ISTGT_Ptr istgt)
 		lu = istgt->logical_unit[i];
 		if (lu == NULL)
 			continue;
-
-		if (lu->queue_depth != 0) {
-			/* create LU thread */
-#ifdef ISTGT_STACKSIZE
-			rc = pthread_create(&lu->thread, &istgt->attr, &luworker, (void *)lu);
-#else
-			rc = pthread_create(&lu->thread, NULL, &luworker, (void *)lu);
-#endif
-			if (rc != 0) {
-				ISTGT_ERRLOG("pthread_create() failed\n");
-				return -1;
-			}
-#if 0
-			rc = pthread_detach(lu->thread);
-			if (rc != 0) {
-				ISTGT_ERRLOG("pthread_detach() failed\n");
-				return -1;
-			}
-#endif
-#ifdef HAVE_PTHREAD_SET_NAME_NP
-			snprintf(buf, sizeof buf, "luthread #%d", i);
-			pthread_set_name_np(lu->thread, buf);
-#endif
+		rc = istgt_lu_create_thread(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("lu_create_thread() failed\n");
+			return -1;
 		}
+	}
+
+	return 0;
+}
+
+static int
+istgt_lu_shutdown_unit(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
+{
+	int rc;
+
+	switch (lu->type) {
+	case ISTGT_LU_TYPE_PASS:
+		rc = istgt_lu_pass_shutdown(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_pass_shutdown() failed\n", lu->num);
+			/* ignore error */
+		}
+		break;
+
+	case ISTGT_LU_TYPE_DISK:
+		rc = istgt_lu_disk_shutdown(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_disk_shutdown() failed\n", lu->num);
+			/* ignore error */
+		}
+		break;
+
+	case ISTGT_LU_TYPE_DVD:
+		rc = istgt_lu_dvd_shutdown(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_dvd_shutdown() failed\n", lu->num);
+			/* ignore error */
+		}
+		break;
+
+	case ISTGT_LU_TYPE_TAPE:
+		rc = istgt_lu_tape_shutdown(istgt, lu);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: lu_tape_shutdown() failed\n", lu->num);
+			/* ignore error */
+		}
+		break;
+
+	case ISTGT_LU_TYPE_NONE:
+		//ISTGT_ERRLOG("LU%d: dummy type\n", lu->num);
+		break;
+	default:
+		ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
+		return -1;
+	}
+
+	rc = istgt_lu_del_unit(istgt, lu);
+	if (rc < 0) {
+		ISTGT_ERRLOG("LU%d: lu_del_unit() failed\n", lu->num);
+		/* ignore error */
+	}
+
+	if (lu->queue_depth != 0) {
+		rc = pthread_cond_broadcast(&lu->queue_cond);
+		if (rc != 0) {
+			ISTGT_ERRLOG("LU%d: cond_broadcast() failed\n", lu->num);
+		}
+		rc = pthread_join(lu->thread, NULL);
+		if (rc != 0) {
+			ISTGT_ERRLOG("LU%d: pthread_join() failed\n", lu->num);
+		}
+	}
+	rc = pthread_cond_destroy(&lu->queue_cond);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: cond_destroy() failed\n", lu->num);
+		/* ignore error */
+	}
+	rc = pthread_mutex_destroy(&lu->queue_mutex);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
+		/* ignore error */
+	}
+	rc = pthread_mutex_destroy(&lu->state_mutex);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
+		/* ignore error */
+	}
+	rc = pthread_mutex_destroy(&lu->mutex);
+	if (rc != 0) {
+		ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
+		/* ignore error */
 	}
 
 	return 0;
@@ -2121,93 +2621,21 @@ istgt_lu_shutdown(ISTGT_Ptr istgt)
 	int i;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "istgt_lu_shutdown\n");
-
+	MTX_LOCK(&istgt->mutex);
 	for (i = 0; i < MAX_LOGICAL_UNIT; i++) {
 		lu = istgt->logical_unit[i];
 		if (lu == NULL)
 			continue;
 		istgt_lu_set_state(lu, ISTGT_STATE_SHUTDOWN);
-
-		switch (lu->type) {
-		case ISTGT_LU_TYPE_PASS:
-			rc = istgt_lu_pass_shutdown(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_pass_shutdown() failed\n", lu->num);
-				/* ignore error */
-			}
-			break;
-
-		case ISTGT_LU_TYPE_DISK:
-			rc = istgt_lu_disk_shutdown(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_disk_shutdown() failed\n", lu->num);
-				/* ignore error */
-			}
-			break;
-
-		case ISTGT_LU_TYPE_DVD:
-			rc = istgt_lu_dvd_shutdown(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_dvd_shutdown() failed\n", lu->num);
-				/* ignore error */
-			}
-			break;
-
-		case ISTGT_LU_TYPE_TAPE:
-			rc = istgt_lu_tape_shutdown(istgt, lu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("LU%d: lu_tape_shutdown() failed\n", lu->num);
-				/* ignore error */
-			}
-			break;
-
-		case ISTGT_LU_TYPE_NONE:
-			//ISTGT_ERRLOG("LU%d: dummy type\n", lu->num);
-			break;
-		default:
-			ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
-			return -1;
-		}
-
-		rc = istgt_lu_del_unit(istgt, lu);
+		rc = istgt_lu_shutdown_unit(istgt, lu);
 		if (rc < 0) {
-			ISTGT_ERRLOG("LU%d: lu_del_unit() failed\n", lu->num);
-			/* ignore error */
-		}
-
-		if (lu->queue_depth != 0) {
-			rc = pthread_cond_broadcast(&lu->queue_cond);
-			if (rc != 0) {
-				ISTGT_ERRLOG("LU%d: cond_broadcast() failed\n", lu->num);
-			}
-			rc = pthread_join(lu->thread, NULL);
-			if (rc != 0) {
-				ISTGT_ERRLOG("LU%d: pthread_join() failed\n", lu->num);
-			}
-		}
-		rc = pthread_cond_destroy(&lu->queue_cond);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: cond_destroy() failed\n", lu->num);
-			/* ignore error */
-		}
-		rc = pthread_mutex_destroy(&lu->queue_mutex);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
-			/* ignore error */
-		}
-		rc = pthread_mutex_destroy(&lu->state_mutex);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
-			/* ignore error */
-		}
-		rc = pthread_mutex_destroy(&lu->mutex);
-		if (rc != 0) {
-			ISTGT_ERRLOG("LU%d: mutex_destroy() failed\n", lu->num);
+			ISTGT_ERRLOG("LU%d: lu_shutdown_unit() failed\n", lu->num);
 			/* ignore error */
 		}
 		xfree(lu);
 		istgt->logical_unit[i] = NULL;
 	}
+	MTX_UNLOCK(&istgt->mutex);
 
 	return 0;
 }
@@ -2245,7 +2673,7 @@ istgt_lu_lun2islun(int lun, int maxlun)
 		method = 0x00U;
 		fmt_lun = (method & 0x03U) << 62;
 		fmt_lun |= (islun & 0x00ffU) << 48;
-	} else if (maxlun <= 0x4000U) {
+	} else if (maxlun <= 0x4000) {
 		/* below 16384 */
 		method = 0x01U;
 		fmt_lun = (method & 0x03U) << 62;
@@ -2365,9 +2793,7 @@ istgt_lu_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 
 	case ISTGT_LU_TYPE_DISK:
 		if (lu->queue_depth != 0) {
-			//MTX_LOCK(&lu->queue_mutex);
 			rc = istgt_lu_disk_queue(conn, lu_cmd);
-			//MTX_UNLOCK(&lu->queue_mutex);
 			if (rc < 0) {
 				ISTGT_ERRLOG("LU%d: lu_disk_queue() failed\n",
 				    lu->num);
@@ -2444,6 +2870,7 @@ istgt_lu_create_task(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, ISTGT_LU_TASK_Ptr l
 	lu_task->iobuf = NULL;
 	lu_task->data = NULL;
 	lu_task->sense_data = NULL;
+	lu_task->alloc_len = 0;
 	lu_task->create_time = 0;
 	lu_task->condwait = 0;
 	lu_task->offset = 0;
@@ -2535,6 +2962,7 @@ istgt_lu_create_task(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, ISTGT_LU_TASK_Ptr l
 	lu_task->data = xmalloc(alloc_len);
 	lu_task->sense_data = lu_task->data + ISCSI_ALIGN(lu_cmd->alloc_len);
 	lu_task->iobuf = lu_task->sense_data + ISCSI_ALIGN(lu_cmd->sense_alloc_len);
+	lu_task->alloc_len = alloc_len;
 #endif
 
 	/* creation time */
@@ -2781,9 +3209,14 @@ luworker(void *arg)
 				if (istgt_lu_get_state(lu) != ISTGT_STATE_RUNNING) {
 					goto loop_exit;
 				}
-				MTX_LOCK(&lu->queue_mutex);
 				qcnt = istgt_lu_disk_queue_count(lu, &lun);
 				if (qcnt == 0) {
+					MTX_LOCK(&lu->queue_mutex);
+					if (lu->queue_check != 0) {
+						lu->queue_check = 0;
+						MTX_UNLOCK(&lu->queue_mutex);
+						continue;
+					}
 #if 0
 					now = time(NULL);
 					abstime.tv_sec = now + timeout;
@@ -2797,13 +3230,13 @@ luworker(void *arg)
 					pthread_cond_wait(&lu->queue_cond,
 					    &lu->queue_mutex);
 #endif
+					lu->queue_check = 0;
+					MTX_UNLOCK(&lu->queue_mutex);
 					qcnt = istgt_lu_disk_queue_count(lu, &lun);
 					if (qcnt == 0) {
-						MTX_UNLOCK(&lu->queue_mutex);
 						continue;
 					}
 				}
-				MTX_UNLOCK(&lu->queue_mutex);
 				break;
 			}
 			if (qcnt < 0) {
@@ -2812,6 +3245,10 @@ luworker(void *arg)
 				break;
 			}
 			rc = istgt_lu_disk_queue_start(lu, lun);
+			if (rc == 0 && qcnt >= 2) {
+				qcnt--;
+				rc = istgt_lu_disk_queue_start(lu, lun);
+			}
 			lun++;
 			if (rc == -2) {
 				ISTGT_WARNLOG("LU%d: lu_disk_queue_start() aborted\n",

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -50,6 +50,13 @@
 
 #include "istgt.h"
 #include "istgt_misc.h"
+
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
+static void fatal(const char *format, ...) __attribute__((__noreturn__, __format__(__printf__, 1, 2)));
 
 static void
 fatal(const char *format, ...)
@@ -439,27 +446,27 @@ istgt_fdump(FILE *fp, const char *label, const uint8_t *buf, size_t len)
 {
 	char tmpbuf[MAX_TMPBUF];
 	char buf8[8+1];
-	int total;
-	int i;
+	size_t total;
+	size_t idx;
 
 	fprintf(fp, "%s\n", label);
 
 	memset(buf8, 0, sizeof buf8);
 	total = 0;
-	for (i = 0; i < len; i++) {
-		if (i != 0 && i % 8 == 0) {
+	for (idx = 0; idx < len; idx++) {
+		if (idx != 0 && idx % 8 == 0) {
 			total += snprintf(tmpbuf + total, sizeof tmpbuf - total,
-							  "%s", buf8);
+			    "%s", buf8);
 			fprintf(fp, "%s\n", tmpbuf);
 			total = 0;
 		}
 		total += snprintf(tmpbuf + total, sizeof tmpbuf - total,
-						  "%2.2x ", buf[i] & 0xff);
-		buf8[i % 8] = isprint(buf[i]) ? buf[i] : '.';
+		    "%2.2x ", buf[idx] & 0xff);
+		buf8[idx % 8] = isprint(buf[idx]) ? buf[idx] : '.';
 	}
-	for ( ; i % 8 != 0; i++) {
+	for ( ; idx % 8 != 0; idx++) {
 		total += snprintf(tmpbuf + total, sizeof tmpbuf - total, "   ");
-		buf8[i % 8] = ' ';
+		buf8[idx % 8] = ' ';
 	}
 	total += snprintf(tmpbuf + total, sizeof tmpbuf - total, "%s", buf8);
 	fprintf(fp, "%s\n", tmpbuf);
@@ -507,20 +514,20 @@ istgt_gen_random(uint8_t *buf, size_t len)
 {
 #ifdef USE_RANDOM
 	long l;
-	int i;
+	size_t idx;
 
 	srandomdev();
-	for (i = 0; i < len; i++) {
+	for (idx = 0; idx < len; idx++) {
 		l = random();
-		buf[i] = (uint8_t) l;
+		buf[idx] = (uint8_t) l;
 	}
 #else
 	uint32_t r;
-	int i;
+	size_t idx;
 
-	for (i = 0; i < len; i++) {
+	for (idx = 0; idx < len; idx++) {
 		r = arc4random();
-		buf[i] = (uint8_t) r;
+		buf[idx] = (uint8_t) r;
 	}
 #endif /* USE_RANDOM */
 }
@@ -529,8 +536,8 @@ int
 istgt_bin2hex(char *buf, size_t len, const uint8_t *data, size_t data_len)
 {
 	const char *digits = "0123456789ABCDEF";
-	int total = 0;
-	int i;
+	size_t total = 0;
+	size_t idx;
 
 	if (len < 3)
 		return -1;
@@ -540,14 +547,14 @@ istgt_bin2hex(char *buf, size_t len, const uint8_t *data, size_t data_len)
 	total++;
 	buf[total] = '\0';
 
-	for (i = 0; i < data_len; i++) {
+	for (idx = 0; idx < data_len; idx++) {
 		if (total + 3 > len) {
 			buf[total] = '\0';
 			return - 1;
 		}
-		buf[total] = digits[(data[i] >> 4) & 0x0fU];
+		buf[total] = digits[(data[idx] >> 4) & 0x0fU];
 		total++;
-		buf[total] = digits[data[i] & 0x0fU];
+		buf[total] = digits[data[idx] & 0x0fU];
 		total++;
 	}
 	buf[total] = '\0';
@@ -560,7 +567,7 @@ istgt_hex2bin(uint8_t *data, size_t data_len, const char *str)
 	const char *digits = "0123456789ABCDEF";
 	const char *dp;
 	const char *p;
-	int total = 0;
+	size_t total = 0;
 	int n0, n1;
 
 	p = str;

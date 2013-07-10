@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -68,6 +68,11 @@
 #include <sys/time.h>
 #endif
 
+#if !defined(__GNUC__)
+#undef __attribute__
+#define __attribute__(x)
+#endif
+
 /* according to RFC1982 */
 #define SN32_CMPMAX (((uint32_t)1U) << (32 - 1))
 #define SN32_LT(S1,S2) \
@@ -83,7 +88,7 @@
 		|| ((uint32_t)(S1) > (uint32_t)(S2)			\
 		    && ((uint32_t)(S1) - (uint32_t)(S2) < SN32_CMPMAX))))
 
-#define POLLWAIT 3000
+#define POLLWAIT 5000
 #define MAX_MCSREVWAIT (10 * 1000)
 #define ISCMDQ 8
 
@@ -112,6 +117,14 @@ static void istgt_remove_conn(CONN_Ptr conn);
 static int istgt_iscsi_drop_all_conns(CONN_Ptr conn);
 static int istgt_iscsi_drop_old_conns(CONN_Ptr conn);
 
+/* Switch to use readv/writev (assume blocking) */
+#define ISTGT_USE_IOVEC
+
+#if defined (ISTGT_USE_IOVEC)
+#include <sys/uio.h>
+#endif
+
+#if !defined (ISTGT_USE_IOVEC)
 #if 0
 #define ISTGT_USE_RECVBLOCK
 #define ISTGT_USE_SENDBLOCK
@@ -157,7 +170,7 @@ istgt_iscsi_read(CONN_Ptr conn, void *buf, size_t nbytes)
 	} while (total < nbytes);
 	if (total != (nbytes + pad_bytes)) {
 		/* incomplete bytes */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %d/%d+%d bytes\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %zd/%zd+%zd bytes\n",
 		    total, nbytes, pad_bytes);
 		if (total > nbytes) {
 			total = nbytes;
@@ -167,11 +180,11 @@ istgt_iscsi_read(CONN_Ptr conn, void *buf, size_t nbytes)
 
 	if (pad_bytes != 0) {
 		/* complete padding */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %d bytes (padding %d)\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %zd bytes (padding %zd)\n",
 		    nbytes, pad_bytes);
 	} else {
 		/* just aligned */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %d bytes (no padding)\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %zd bytes (no padding)\n",
 		    nbytes);
 	}
 #else /* !ISTGT_USE_RECVBLOCK */
@@ -197,7 +210,7 @@ istgt_iscsi_read(CONN_Ptr conn, void *buf, size_t nbytes)
 
 	if (total != nbytes) {
 		/* incomplete bytes */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %d/%d bytes\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %zd/%zd bytes\n",
 		    total, nbytes);
 		return total;
 	}
@@ -213,14 +226,14 @@ istgt_iscsi_read(CONN_Ptr conn, void *buf, size_t nbytes)
 			if (r < 0) {
 				/* error */
 				ISTGT_TRACELOG(ISTGT_TRACE_NET,
-				    "Read %d bytes (padding error) (errno=%d)\n",
+				    "Read %zd bytes (padding error) (errno=%d)\n",
 				    nbytes, errno);
 				return nbytes;
 			}
 			if (r == 0) {
 				/* EOF */
 				ISTGT_TRACELOG(ISTGT_TRACE_NET,
-				    "Read %d bytes (padding EOF)\n",
+				    "Read %zd bytes (padding EOF)\n",
 				    nbytes);
 				return nbytes;
 			}
@@ -230,18 +243,18 @@ istgt_iscsi_read(CONN_Ptr conn, void *buf, size_t nbytes)
 		if (total != pad_bytes) {
 			/* incomplete padding */
 			ISTGT_TRACELOG(ISTGT_TRACE_NET,
-			    "Read %d bytes (padding %d)\n",
+			    "Read %zd bytes (padding %zd)\n",
 			    nbytes, total);
 			return nbytes;
 		}
 		/* complete padding */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %d bytes (padding %d)\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %zd bytes (padding %zd)\n",
 		    nbytes, pad_bytes);
 		return nbytes;
 	}
 
 	/* just aligned */
-	ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %d bytes (no padding)\n",
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "Read %zd bytes (no padding)\n",
 	    nbytes);
 #endif /* ISTGT_USE_RECVBLOCK */
 	return nbytes;
@@ -273,7 +286,7 @@ istgt_iscsi_write(CONN_Ptr conn, const void *buf, size_t nbytes)
 
 	if (total != nbytes) {
 		/* incomplete bytes */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Write %d/%d bytes\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Write %zd/%zd bytes\n",
 		    total, nbytes);
 		return total;
 	}
@@ -287,7 +300,7 @@ istgt_iscsi_write(CONN_Ptr conn, const void *buf, size_t nbytes)
 			if (r < 0) {
 				/* error */
 				ISTGT_TRACELOG(ISTGT_TRACE_NET,
-				    "Write %d bytes (padding error) (errno=%d)\n",
+				    "Write %zd bytes (padding error) (errno=%d)\n",
 				    nbytes, errno);
 				return nbytes;
 			}
@@ -297,19 +310,19 @@ istgt_iscsi_write(CONN_Ptr conn, const void *buf, size_t nbytes)
 		if (total != pad_bytes) {
 			/* incomplete padding */
 			ISTGT_TRACELOG(ISTGT_TRACE_NET,
-			    "Write %d bytes (padding %d)\n",
+			    "Write %zd bytes (padding %zd)\n",
 			    nbytes, total);
 			return nbytes;
 		}
 
 		/* complete padding */
 		ISTGT_TRACELOG(ISTGT_TRACE_NET,
-		    "Write %d bytes (padding %d)\n",
+		    "Write %zd bytes (padding %zd)\n",
 		    nbytes, pad_bytes);
 	} else {
 		/* just aligned */
 		ISTGT_TRACELOG(ISTGT_TRACE_NET,
-		    "Write %d bytes (no padding)\n",
+		    "Write %zd bytes (no padding)\n",
 		    nbytes);
 	}
 #else /* !ISTGT_USE_SENDBLOCK */
@@ -327,7 +340,7 @@ istgt_iscsi_write(CONN_Ptr conn, const void *buf, size_t nbytes)
 
 	if (total != nbytes) {
 		/* incomplete bytes */
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Write %d/%d bytes\n",
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "Write %zd/%zd bytes\n",
 		    total, nbytes);
 		return r;
 	}
@@ -344,7 +357,7 @@ istgt_iscsi_write(CONN_Ptr conn, const void *buf, size_t nbytes)
 			if (r < 0) {
 				/* error */
 				ISTGT_TRACELOG(ISTGT_TRACE_NET,
-				    "Write %d bytes (padding error) (errno=%d)\n",
+				    "Write %zd bytes (padding error) (errno=%d)\n",
 				    nbytes, errno);
 				return nbytes;
 			}
@@ -354,23 +367,24 @@ istgt_iscsi_write(CONN_Ptr conn, const void *buf, size_t nbytes)
 		if (total != pad_bytes) {
 			/* incomplete padding */
 			ISTGT_TRACELOG(ISTGT_TRACE_NET,
-			    "Write %d bytes (padding %d)\n",
+			    "Write %zd bytes (padding %zd)\n",
 			    nbytes, total);
 			return nbytes;
 		}
 		/* complete padding */
 		ISTGT_TRACELOG(ISTGT_TRACE_NET,
-		    "Write %d bytes (padding %d)\n",
+		    "Write %zd bytes (padding %zd)\n",
 		    nbytes, pad_bytes);
 		return nbytes;
 	}
 
 	/* just aligned */
-	ISTGT_TRACELOG(ISTGT_TRACE_NET, "Write %d bytes (no padding)\n",
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "Write %zd bytes (no padding)\n",
 	    nbytes);
 #endif /* ISTGT_USE_SENDBLOCK */
 	return nbytes;
 }
+#endif /* !defined (ISTGT_USE_IOVEC) */
 
 #define MATCH_DIGEST_WORD(BUF, CRC32C) \
 	(    ((((uint32_t) *((uint8_t *)(BUF)+0)) << 0)		\
@@ -412,6 +426,7 @@ istgt_make_digest_word(uint8_t *buf, size_t len, uint32_t crc32c)
 }
 #endif
 
+#if !defined (ISTGT_USE_IOVEC)
 static int
 istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 {
@@ -442,13 +457,14 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 			    conn->initiator_name);
 			conn->state = CONN_STATE_EXITING;
 		} else {
-			ISTGT_ERRLOG("iscsi_read() failed (errno=%d)\n",
-			    errno);
+			ISTGT_ERRLOG("iscsi_read() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 		}
 		return -1;
 	}
 	if (rc == 0) {
-		ISTGT_TRACELOG(ISTGT_TRACE_NET, "iscsi_read() EOF\n");
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "iscsi_read() EOF (%s)\n",
+		    conn->initiator_name);
 		conn->state = CONN_STATE_EXITING;
 		return -1;
 	}
@@ -466,7 +482,8 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    (4 * total_ahs_len));
 		rc = istgt_iscsi_read(conn, pdu->ahs, (4 * total_ahs_len));
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_read() failed\n");
+			ISTGT_ERRLOG("iscsi_read() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc == 0) {
@@ -492,7 +509,8 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		rc = istgt_iscsi_read(conn, pdu->header_digest,
 		    ISCSI_DIGEST_LEN);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_read() failed\n");
+			ISTGT_ERRLOG("iscsi_read() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			{
 				int opcode = BGET8W(&pdu->bhs.opcode, 5, 6);
 				ISTGT_ERRLOG("Header Digest read error (opcode = 0x%x)\n",
@@ -535,8 +553,8 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    data_len);
 		rc = istgt_iscsi_read(conn, pdu->data, data_len);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_read() failed (%d,errno=%d)\n",
-			    rc, errno);
+			ISTGT_ERRLOG("iscsi_read() failed (%d,errno=%d,%s)\n",
+			    rc, errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc == 0) {
@@ -572,7 +590,8 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		rc = istgt_iscsi_read(conn, pdu->data_digest,
 		    ISCSI_DIGEST_LEN);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_read() failed\n");
+			ISTGT_ERRLOG("iscsi_read() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc == 0) {
@@ -606,7 +625,7 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		}
 		rc = MATCH_DIGEST_WORD(pdu->header_digest, crc32c);
 		if (rc == 0) {
-			ISTGT_ERRLOG("header digest error\n");
+			ISTGT_ERRLOG("header digest error (%s)\n", conn->initiator_name);
 			return -1;
 		}
 	}
@@ -614,18 +633,263 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		crc32c = istgt_crc32c(pdu->data, data_len);
 		rc = MATCH_DIGEST_WORD(pdu->data_digest, crc32c);
 		if (rc == 0) {
-			ISTGT_ERRLOG("data digest error\n");
+			ISTGT_ERRLOG("data digest error (%s)\n", conn->initiator_name);
 			return -1;
 		}
 	}
 
 	return total;
 }
+#else /* defined (ISTGT_USE_IOVEC) */
+static int
+istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
+{
+	struct iovec iovec[4]; /* AHS+HD+DATA+DD */
+	uint32_t crc32c;
+	time_t start, now;
+	int nbytes;
+	int total_ahs_len;
+	int data_len;
+	int segment_len;
+	int total;
+	int rc;
+	int i;
+
+	pdu->ahs = NULL;
+	pdu->total_ahs_len = 0;
+	pdu->data = NULL;
+	pdu->data_segment_len = 0;
+	total = 0;
+
+	/* BHS (require for all PDU) */
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "BHS read %d\n",
+	    ISCSI_BHS_LEN);
+	errno = 0;
+	start = time(NULL);
+	rc = recv(conn->sock, &pdu->bhs, ISCSI_BHS_LEN, MSG_WAITALL);
+	if (rc < 0) {
+		now = time(NULL);
+		if (errno == ECONNRESET) {
+			ISTGT_WARNLOG("Connection reset by peer (%s,time=%d)\n",
+			    conn->initiator_name, (int)difftime(now, start));
+			conn->state = CONN_STATE_EXITING;
+		} else if (errno == ETIMEDOUT) {
+			ISTGT_WARNLOG("Operation timed out (%s,time=%d)\n",
+			    conn->initiator_name, (int)difftime(now, start));
+			conn->state = CONN_STATE_EXITING;
+		} else {
+			ISTGT_ERRLOG("iscsi_read() failed (errno=%d,%s,time=%d)\n",
+			    errno, conn->initiator_name, (int)difftime(now, start));
+		}
+		return -1;
+	}
+	if (rc == 0) {
+		ISTGT_TRACELOG(ISTGT_TRACE_NET, "recv() EOF (%s)\n",
+		    conn->initiator_name);
+		conn->state = CONN_STATE_EXITING;
+		return -1;
+	}
+	if (rc != ISCSI_BHS_LEN) {
+		ISTGT_ERRLOG("invalid BHS length (%d,%s)\n", rc, conn->initiator_name);
+		return -1;
+	}
+	total += ISCSI_BHS_LEN;
+
+	/* AHS */
+	total_ahs_len = DGET8(&pdu->bhs.total_ahs_len);
+	if (total_ahs_len != 0) {
+		pdu->ahs = xmalloc(ISCSI_ALIGN((4 * total_ahs_len)));
+		pdu->total_ahs_len = total_ahs_len;
+		total += (4 * total_ahs_len);
+	} else {
+		pdu->ahs = NULL;
+		pdu->total_ahs_len = 0;
+	}
+	iovec[0].iov_base = pdu->ahs;
+	iovec[0].iov_len = 4 * pdu->total_ahs_len;
+
+	/* Header Digest */
+	iovec[1].iov_base = pdu->header_digest;
+	if (conn->header_digest) {
+		iovec[1].iov_len = ISCSI_DIGEST_LEN;
+		total += ISCSI_DIGEST_LEN;
+	} else {
+		iovec[1].iov_len = 0;
+	}
+
+	/* Data Segment */
+	data_len = DGET24(&pdu->bhs.data_segment_len[0]);
+	if (data_len != 0) {
+		if (conn->sess == NULL) {
+			segment_len = DEFAULT_FIRSTBURSTLENGTH;
+		} else {
+			segment_len = conn->MaxRecvDataSegmentLength;
+		}
+		if (data_len > segment_len) {
+			ISTGT_ERRLOG("Data(%d) > Segment(%d)\n",
+			    data_len, segment_len);
+			return -1;
+		}
+		if (ISCSI_ALIGN(data_len) <= ISTGT_SHORTDATASIZE) {
+			pdu->data = pdu->shortdata;
+		} else {
+			pdu->data = xmalloc(ISCSI_ALIGN(segment_len));
+		}
+		pdu->data_segment_len = data_len;
+		total += ISCSI_ALIGN(data_len);
+	} else {
+		pdu->data = NULL;
+		pdu->data_segment_len = 0;
+	}
+	iovec[2].iov_base = pdu->data;
+	iovec[2].iov_len = ISCSI_ALIGN(pdu->data_segment_len);
+
+	/* Data Digest */
+	iovec[3].iov_base = pdu->data_digest;
+	if (conn->data_digest && data_len != 0) {
+		iovec[3].iov_len = ISCSI_DIGEST_LEN;
+		total += ISCSI_DIGEST_LEN;
+	} else {
+		iovec[3].iov_len = 0;
+	}
+
+	/* read all bytes to iovec */
+	nbytes = total - ISCSI_BHS_LEN;
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "PDU read %d\n", nbytes);
+	errno = 0;
+	start = time(NULL);
+	while (nbytes > 0) {
+		rc = readv(conn->sock, &iovec[0], 4);
+		if (rc < 0) {
+			now = time(NULL);
+			ISTGT_ERRLOG("readv() failed (%d,errno=%d,%s,time=%d)\n",
+			    rc, errno, conn->initiator_name, (int)difftime(now, start));
+			return -1;
+		}
+		if (rc == 0) {
+			ISTGT_TRACELOG(ISTGT_TRACE_NET, "readv() EOF (%s)\n",
+			    conn->initiator_name);
+			conn->state = CONN_STATE_EXITING;
+			return -1;
+		}
+		nbytes -= rc;
+		if (nbytes == 0)
+			break;
+		/* adjust iovec length */
+		for (i = 0; i < 4; i++) {
+			if (iovec[i].iov_len != 0 && iovec[i].iov_len > (size_t)rc) {
+				iovec[i].iov_base
+					= (void *) (((uintptr_t)iovec[i].iov_base) + rc);
+				iovec[i].iov_len -= rc;
+				break;
+			} else {
+				rc -= iovec[i].iov_len;
+				iovec[i].iov_len = 0;
+			}
+		}
+	}
+
+	/* check digest */
+	if (conn->header_digest) {
+		if (total_ahs_len == 0) {
+			crc32c = istgt_crc32c((uint8_t *) &pdu->bhs,
+			    ISCSI_BHS_LEN);
+		} else {
+			int upd_total = 0;
+			crc32c = ISTGT_CRC32C_INITIAL;
+			crc32c = istgt_update_crc32c((uint8_t *) &pdu->bhs,
+			    ISCSI_BHS_LEN, crc32c);
+			upd_total += ISCSI_BHS_LEN;
+			crc32c = istgt_update_crc32c((uint8_t *) pdu->ahs,
+			    (4 * total_ahs_len), crc32c);
+			upd_total += (4 * total_ahs_len);
+			crc32c = istgt_fixup_crc32c(upd_total, crc32c);
+			crc32c = crc32c ^ ISTGT_CRC32C_XOR;
+		}
+		rc = MATCH_DIGEST_WORD(pdu->header_digest, crc32c);
+		if (rc == 0) {
+			ISTGT_ERRLOG("header digest error (%s)\n", conn->initiator_name);
+			return -1;
+		}
+	}
+	if (conn->data_digest && data_len != 0) {
+		crc32c = istgt_crc32c(pdu->data, ISCSI_ALIGN(data_len));
+		rc = MATCH_DIGEST_WORD(pdu->data_digest, crc32c);
+		if (rc == 0) {
+			ISTGT_ERRLOG("data digest error (%s)\n", conn->initiator_name);
+			return -1;
+		}
+	}
+
+	return total;
+}
+#endif /* defined (ISTGT_USE_IOVEC) */
 
 static int istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu);
+static int istgt_iscsi_write_pdu_queue(CONN_Ptr conn, ISCSI_PDU_Ptr pdu, int req_type, int I_bit);
+
+static int istgt_update_pdu(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
+{
+	uint8_t *rsp;
+	uint32_t task_tag;
+	int opcode;
+	int I_bit;
+
+	I_bit = lu_cmd->I_bit;
+	rsp = (uint8_t *) &lu_cmd->pdu->bhs;
+	opcode = BGET8W(&rsp[0], 5, 6);
+	task_tag = DGET32(&rsp[16]);
+	if ((opcode == ISCSI_OP_R2T)
+	    || (opcode == ISCSI_OP_NOPIN && task_tag == 0xffffffffU)) {
+		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		DSET32(&rsp[28], conn->sess->ExpCmdSN);
+		DSET32(&rsp[32], conn->sess->MaxCmdSN);
+		SESS_MTX_UNLOCK(conn);
+	} else if ((opcode == ISCSI_OP_TASK_RSP)
+	    || (opcode == ISCSI_OP_NOPIN && task_tag != 0xffffffffU)) {
+		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
+		if (I_bit == 0) {
+			conn->sess->ExpCmdSN++;
+			conn->sess->MaxCmdSN++;
+		}
+		DSET32(&rsp[28], conn->sess->ExpCmdSN);
+		DSET32(&rsp[32], conn->sess->MaxCmdSN);
+		SESS_MTX_UNLOCK(conn);
+	}
+	return 0;
+}
 
 static int
 istgt_iscsi_write_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
+{
+	int rc;
+
+	if (conn->use_sender == 0) {
+		rc = istgt_iscsi_write_pdu_internal(conn, pdu);
+	} else {
+		rc = istgt_iscsi_write_pdu_queue(conn, pdu, ISTGT_LU_TASK_REQPDU, 0);
+	}
+	return rc;
+}
+
+static int
+istgt_iscsi_write_pdu_upd(CONN_Ptr conn, ISCSI_PDU_Ptr pdu, int I_bit)
+{
+	int rc;
+
+	if (conn->use_sender == 0) {
+		rc = istgt_iscsi_write_pdu_internal(conn, pdu);
+	} else {
+		rc = istgt_iscsi_write_pdu_queue(conn, pdu, ISTGT_LU_TASK_REQUPDPDU, I_bit);
+	}
+	return rc;
+}
+
+static int
+istgt_iscsi_write_pdu_queue(CONN_Ptr conn, ISCSI_PDU_Ptr pdu, int req_type, int I_bit)
 {
 	int rc;
 
@@ -656,16 +920,20 @@ istgt_iscsi_write_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		alloc_len += ISCSI_ALIGN(data_len);
 		lu_task = xmalloc(alloc_len);
 		memset(lu_task, 0, alloc_len);
-		lu_task->lu_cmd.pdu = (ISCSI_PDU_Ptr) ((uint8_t *)lu_task
+		lu_task->lu_cmd.pdu = (ISCSI_PDU_Ptr) ((uintptr_t)lu_task
 		    + ISCSI_ALIGN(sizeof *lu_task));
-		lu_task->lu_cmd.pdu->ahs = (ISCSI_AHS *) ((uint8_t *)lu_task->lu_cmd.pdu
+		lu_task->lu_cmd.pdu->ahs = (ISCSI_AHS *) ((uintptr_t)lu_task->lu_cmd.pdu
 		    + ISCSI_ALIGN(sizeof *lu_task->lu_cmd.pdu));
-		lu_task->lu_cmd.pdu->data = (uint8_t *)lu_task->lu_cmd.pdu->ahs
-		    + ISCSI_ALIGN(4 * total_ahs_len);
+		lu_task->lu_cmd.pdu->data = (uint8_t *) ((uintptr_t)lu_task->lu_cmd.pdu->ahs
+		    + ISCSI_ALIGN(4 * total_ahs_len));
 
 		/* specify type and self conn */
-		lu_task->type = ISTGT_LU_TASK_REQPDU;
+		//lu_task->type = ISTGT_LU_TASK_REQPDU;
+		lu_task->type = req_type;
 		lu_task->conn = conn;
+
+		/* extra flags */
+		lu_task->lu_cmd.I_bit = I_bit;
 
 		/* copy PDU structure */
 		src_pdu = pdu;
@@ -717,6 +985,7 @@ istgt_iscsi_write_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	return rc;
 }
 
+#if !defined (ISTGT_USE_IOVEC)
 static int
 istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 {
@@ -773,8 +1042,8 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    total);
 		rc = istgt_iscsi_write(conn, spp, total);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_write() failed (errno=%d)\n",
-			    errno);
+			ISTGT_ERRLOG("iscsi_write() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc != total) {
@@ -790,7 +1059,8 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	    ISCSI_BHS_LEN);
 	rc = istgt_iscsi_write(conn, &pdu->bhs, ISCSI_BHS_LEN);
 	if (rc < 0) {
-		ISTGT_ERRLOG("iscsi_write() failed (errno=%d)\n", errno);
+		ISTGT_ERRLOG("iscsi_write() failed (errno=%d,%s)\n", errno,
+		    conn->initiator_name);
 		return -1;
 	}
 	if (rc != ISCSI_BHS_LEN) {
@@ -805,7 +1075,8 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    (4 * total_ahs_len));
 		rc = istgt_iscsi_write(conn, pdu->ahs, (4 * total_ahs_len));
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_write() failed\n");
+			ISTGT_ERRLOG("iscsi_write() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc != (4 * total_ahs_len)) {
@@ -839,7 +1110,8 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		rc = istgt_iscsi_write(conn, pdu->header_digest,
 		    ISCSI_DIGEST_LEN);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_write() failed\n");
+			ISTGT_ERRLOG("iscsi_write() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc != ISCSI_DIGEST_LEN) {
@@ -856,7 +1128,8 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    data_len);
 		rc = istgt_iscsi_write(conn, pdu->data, data_len);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_write() failed\n");
+			ISTGT_ERRLOG("iscsi_write() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc != data_len) {
@@ -879,7 +1152,8 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		rc = istgt_iscsi_write(conn, pdu->data_digest,
 		    ISCSI_DIGEST_LEN);
 		if (rc < 0) {
-			ISTGT_ERRLOG("iscsi_write() failed\n");
+			ISTGT_ERRLOG("iscsi_write() failed (errno=%d,%s)\n",
+			    errno, conn->initiator_name);
 			return -1;
 		}
 		if (rc != ISCSI_DIGEST_LEN) {
@@ -892,6 +1166,121 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 
 	return total;
 }
+#else /* defined (ISTGT_USE_IOVEC) */
+static int
+istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
+{
+	struct iovec iovec[5]; /* BHS+AHS+HD+DATA+DD */
+	uint8_t *cp;
+	uint32_t crc32c;
+	time_t start, now;
+	int nbytes;
+	int enable_digest;
+	int opcode;
+	int total_ahs_len;
+	int data_len;
+	int total;
+	int rc;
+	int i;
+
+	cp = (uint8_t *) &pdu->bhs;
+	total_ahs_len = DGET8(&cp[4]);
+	data_len = DGET24(&cp[5]);
+	total = 0;
+
+	enable_digest = 1;
+	opcode = BGET8W(&cp[0], 5, 6);
+	if (opcode == ISCSI_OP_LOGIN_RSP) {
+		/* this PDU should be sent without digest */
+		enable_digest = 0;
+	}
+
+	/* BHS */
+	iovec[0].iov_base = &pdu->bhs;
+	iovec[0].iov_len = ISCSI_BHS_LEN;
+	total += ISCSI_BHS_LEN;
+
+	/* AHS */
+	iovec[1].iov_base = pdu->ahs;
+	iovec[1].iov_len = 4 * total_ahs_len;
+	total += (4 * total_ahs_len);
+
+	/* Header Digest */
+	iovec[2].iov_base = pdu->header_digest;
+	if (enable_digest && conn->header_digest) {
+		if (total_ahs_len == 0) {
+			crc32c = istgt_crc32c((uint8_t *) &pdu->bhs,
+			    ISCSI_BHS_LEN);
+		} else {
+			int upd_total = 0;
+			crc32c = ISTGT_CRC32C_INITIAL;
+			crc32c = istgt_update_crc32c((uint8_t *) &pdu->bhs,
+			    ISCSI_BHS_LEN, crc32c);
+			upd_total += ISCSI_BHS_LEN;
+			crc32c = istgt_update_crc32c((uint8_t *) pdu->ahs,
+			    (4 * total_ahs_len), crc32c);
+			upd_total += (4 * total_ahs_len);
+			crc32c = istgt_fixup_crc32c(upd_total, crc32c);
+			crc32c = crc32c ^ ISTGT_CRC32C_XOR;
+		}
+		MAKE_DIGEST_WORD(pdu->header_digest, crc32c);
+
+		iovec[2].iov_len = ISCSI_DIGEST_LEN;
+		total += ISCSI_DIGEST_LEN;
+	} else {
+		iovec[2].iov_len = 0;
+	}
+
+	/* Data Segment */
+	iovec[3].iov_base = pdu->data;
+	iovec[3].iov_len = ISCSI_ALIGN(data_len);
+	total += ISCSI_ALIGN(data_len);
+
+	/* Data Digest */
+	iovec[4].iov_base = pdu->data_digest;
+	if (enable_digest && conn->data_digest && data_len != 0) {
+		crc32c = istgt_crc32c(pdu->data, ISCSI_ALIGN(data_len));
+		MAKE_DIGEST_WORD(pdu->data_digest, crc32c);
+
+		iovec[4].iov_len = ISCSI_DIGEST_LEN;
+		total += ISCSI_DIGEST_LEN;
+	} else {
+		iovec[4].iov_len = 0;
+	}
+
+	/* write all bytes from iovec */
+	nbytes = total;
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "PDU write %d\n", nbytes);
+	errno = 0;
+	start = time(NULL);
+	while (nbytes > 0) {
+		rc = writev(conn->sock, &iovec[0], 5);
+		if (rc < 0) {
+			now = time(NULL);
+			ISTGT_ERRLOG("writev() failed (errno=%d,%s,time=%d)\n",
+			    errno, conn->initiator_name, (int)difftime(now, start));
+			return -1;
+		}
+		nbytes -= rc;
+		if (nbytes == 0)
+			break;
+		/* adjust iovec length */
+		for (i = 0; i < 5; i++) {
+			if (iovec[i].iov_len != 0 && iovec[i].iov_len > (size_t)rc) {
+				iovec[i].iov_base
+					= (void *) (((uintptr_t)iovec[i].iov_base) + rc);
+				iovec[i].iov_len -= rc;
+				break;
+			} else {
+				rc -= iovec[i].iov_len;
+				iovec[i].iov_len = 0;
+			}
+		}
+	}
+
+	return total;
+}
+#endif /* defined (ISTGT_USE_IOVEC) */
 
 int
 istgt_iscsi_copy_pdu(ISCSI_PDU_Ptr dst_pdu, ISCSI_PDU_Ptr src_pdu)
@@ -1346,7 +1735,7 @@ istgt_iscsi_negotiate_params(CONN_Ptr conn, ISCSI_PARAM *params, uint8_t *data, 
 }
 
 static int
-istgt_iscsi_append_text(CONN_Ptr conn, const char *key, const char *val, uint8_t *data, int alloc_len, int data_len)
+istgt_iscsi_append_text(CONN_Ptr conn __attribute__((__unused__)), const char *key, const char *val, uint8_t *data, int alloc_len, int data_len)
 {
 	int total;
 	int len;
@@ -1782,14 +2171,16 @@ istgt_iscsi_reject(CONN_Ptr conn, ISCSI_PDU_Ptr pdu, int reason)
 
 	DSET32(&rsp[16], 0xffffffffU);
 
-	DSET32(&rsp[24], conn->StatSN);
-	conn->StatSN++;
 	if (conn->sess != NULL) {
 		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
 		DSET32(&rsp[28], conn->sess->ExpCmdSN);
 		DSET32(&rsp[32], conn->sess->MaxCmdSN);
 		SESS_MTX_UNLOCK(conn);
 	} else {
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
 		DSET32(&rsp[28], 1);
 		DSET32(&rsp[32], 1);
 	}
@@ -2298,8 +2689,8 @@ istgt_iscsi_op_login(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 			}
 
 			/* initialize parameters */
-			conn->StatSN = ExpStatSN;
 			SESS_MTX_LOCK(conn);
+			conn->StatSN = ExpStatSN;
 			conn->MaxOutstandingR2T
 				= conn->sess->MaxOutstandingR2T;
 			conn->sess->isid = isid;
@@ -2574,14 +2965,16 @@ istgt_iscsi_op_login(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	DSET16(&rsp[14], tsih);
 	DSET32(&rsp[16], task_tag);
 
-	DSET32(&rsp[24], conn->StatSN);
-	conn->StatSN++;
 	if (conn->sess != NULL) {
 		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
 		DSET32(&rsp[28], conn->sess->ExpCmdSN);
 		DSET32(&rsp[32], conn->sess->MaxCmdSN);
 		SESS_MTX_UNLOCK(conn);
 	} else {
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
 		DSET32(&rsp[28], CmdSN);
 		DSET32(&rsp[32], CmdSN);
 	}
@@ -2683,7 +3076,6 @@ istgt_iscsi_op_text(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		ISTGT_ERRLOG("CmdSN(%u) error\n", CmdSN);
 		return -1;
 	}
-	SESS_MTX_UNLOCK(conn);
 	if (SN32_GT(ExpStatSN, conn->StatSN)) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "StatSN(%u) advanced\n",
 		    ExpStatSN);
@@ -2692,6 +3084,7 @@ istgt_iscsi_op_text(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	if (ExpStatSN != conn->StatSN) {
 #if 0
 		ISTGT_ERRLOG("StatSN(%u) error\n", ExpStatSN);
+		SESS_MTX_UNLOCK(conn);
 		return -1;
 #else
 		/* StarPort have a bug */
@@ -2699,6 +3092,7 @@ istgt_iscsi_op_text(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		conn->StatSN = ExpStatSN;
 #endif
 	}
+	SESS_MTX_UNLOCK(conn);
 
 	if (F_bit && C_bit) {
 		ISTGT_ERRLOG("final and continue\n");
@@ -2768,9 +3162,9 @@ istgt_iscsi_op_text(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		DSET32(&rsp[20], transfer_tag);
 	}
 
+	SESS_MTX_LOCK(conn);
 	DSET32(&rsp[24], conn->StatSN);
 	conn->StatSN++;
-	SESS_MTX_LOCK(conn);
 	if (I_bit == 0) {
 		conn->sess->ExpCmdSN++;
 		conn->sess->MaxCmdSN++;
@@ -2850,6 +3244,9 @@ istgt_iscsi_op_logout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    "CmdSN=%u, ExpStatSN=%u, StatSN=%u\n",
 		    CmdSN, ExpStatSN, conn->StatSN);
 	}
+	if (conn->sess != NULL) {
+		SESS_MTX_LOCK(conn);
+	}
 	if (SN32_GT(ExpStatSN, conn->StatSN)) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "StatSN(%u) advanced\n",
 		    ExpStatSN);
@@ -2859,6 +3256,9 @@ istgt_iscsi_op_logout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		ISTGT_WARNLOG("StatSN(%u/%u) might have dropped\n",
 		    ExpStatSN, conn->StatSN);
 		/* ignore error */
+	}
+	if (conn->sess != NULL) {
+		SESS_MTX_UNLOCK(conn);
 	}
 
 	response = 0; // connection or session closed successfully
@@ -2875,10 +3275,10 @@ istgt_iscsi_op_logout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 
 	DSET32(&rsp[16], task_tag);
 
-	DSET32(&rsp[24], conn->StatSN);
-	conn->StatSN++;
 	if (conn->sess != NULL) {
 		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
 		if (conn->sess->connections == 1) {
 			conn->sess->ExpCmdSN++;
 			conn->sess->MaxCmdSN++;
@@ -2887,6 +3287,8 @@ istgt_iscsi_op_logout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		DSET32(&rsp[32], conn->sess->MaxCmdSN);
 		SESS_MTX_UNLOCK(conn);
 	} else {
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
 		DSET32(&rsp[28], CmdSN);
 		DSET32(&rsp[32], CmdSN);
 	}
@@ -3053,13 +3455,13 @@ istgt_iscsi_transfer_in_internal(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 		DSET32(&rsp[16], task_tag);
 		DSET32(&rsp[20], transfer_tag);
 
+		SESS_MTX_LOCK(conn);
 		if (S_bit) {
 			DSET32(&rsp[24], conn->StatSN);
 			conn->StatSN++;
 		} else {
 			DSET32(&rsp[24], 0); // StatSN or Reserved
 		}
-		SESS_MTX_LOCK(conn);
 		if (F_bit && S_bit && lu_cmd->I_bit == 0) {
 			conn->sess->MaxCmdSN++;
 		}
@@ -3104,12 +3506,12 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	uint32_t transfer_len;
 	uint32_t CmdSN;
 	uint32_t ExpStatSN;
+	size_t bidi_residual_len;
+	size_t residual_len;
+	size_t data_len;
+	size_t alloc_len;
 	int I_bit, F_bit, R_bit, W_bit, Attr_bit;
 	int o_bit, u_bit, O_bit, U_bit;
-	int bidi_residual_len;
-	int residual_len;
-	int data_len;
-	int alloc_len;
 	int rc;
 
 	if (!conn->full_feature) {
@@ -3156,10 +3558,10 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		if (SN32_GT(CmdSN, conn->sess->ExpCmdSN)) {
 			if (conn->sess->connections > 1) {
 				struct timespec abstime;
-				time_t now;
+				time_t start, now;
 
 				SESS_MTX_UNLOCK(conn);
-				now = time(NULL);
+				start = now = time(NULL);
 				memset(&abstime, 0, sizeof abstime);
 				abstime.tv_sec = now + (MAX_MCSREVWAIT / 1000);
 				abstime.tv_nsec = (MAX_MCSREVWAIT % 1000) * 1000000;
@@ -3186,8 +3588,11 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 					}
 				}
 				if (rc < 0) {
-					ISTGT_ERRLOG("MCS: CmdSN(%u) error ExpCmdSN=%u\n",
-					    CmdSN, conn->sess->ExpCmdSN);
+					now = time(NULL);
+					ISTGT_ERRLOG("MCS: CmdSN(%u) error ExpCmdSN=%u "
+					    "(time=%d)\n",
+					    CmdSN, conn->sess->ExpCmdSN,
+					    (int)difftime(now, start));
 					SESS_MTX_UNLOCK(conn);
 					return -1;
 				}
@@ -3219,7 +3624,6 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    CmdSN, conn->sess->ExpCmdSN);
 		return -1;
 	}
-	SESS_MTX_UNLOCK(conn);
 	if (SN32_GT(ExpStatSN, conn->StatSN)) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "StatSN(%u) advanced\n",
 		    ExpStatSN);
@@ -3227,16 +3631,18 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	}
 	{
 		uint32_t QCmdSN;
-		SESS_MTX_LOCK(conn);
+		//SESS_MTX_LOCK(conn);
 		QCmdSN = conn->sess->MaxCmdSN - conn->sess->ExpCmdSN + 1;
-		SESS_MTX_UNLOCK(conn);
+		//SESS_MTX_UNLOCK(conn);
 		QCmdSN += conn->queue_depth;
 		if (SN32_LT(ExpStatSN + QCmdSN, conn->StatSN)) {
 			ISTGT_ERRLOG("StatSN(%u/%u) QCmdSN(%u) error\n",
 			    ExpStatSN, conn->StatSN, QCmdSN);
+			SESS_MTX_UNLOCK(conn);
 			return -1;
 		}
 	}
+	SESS_MTX_UNLOCK(conn);
 
 	lu_cmd.pdu = pdu;
 	SESS_MTX_LOCK(conn);
@@ -3336,13 +3742,13 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		&& lu_cmd.status == ISTGT_SCSI_STATUS_GOOD) {
 		if (data_len < transfer_len) {
 			/* underflow */
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Underflow %u/%u\n",
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Underflow %zu/%u\n",
 			    data_len, transfer_len);
 			residual_len = transfer_len - data_len;
 			U_bit = 1;
 		} else if (data_len > transfer_len) {
 			/* overflow */
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Overflow %u/%u\n",
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Overflow %zu/%u\n",
 			    data_len, transfer_len);
 			residual_len = data_len - transfer_len;
 			O_bit = 1;
@@ -3371,9 +3777,9 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	DSET32(&rsp[16], task_tag);
 	DSET32(&rsp[20], 0); // SNACK Tag
 
+	SESS_MTX_LOCK(conn);
 	DSET32(&rsp[24], conn->StatSN);
 	conn->StatSN++;
-	SESS_MTX_LOCK(conn);
 	if (I_bit == 0) {
 		conn->sess->MaxCmdSN++;
 	}
@@ -3418,11 +3824,11 @@ istgt_iscsi_task_response(CONN_Ptr conn, ISTGT_LU_TASK_Ptr lu_task)
 	uint32_t task_tag;
 	uint32_t transfer_len;
 	uint32_t CmdSN;
+	size_t residual_len;
+	size_t data_len;
 	int I_bit;
 	int o_bit, u_bit, O_bit, U_bit;
 	int bidi_residual_len;
-	int residual_len;
-	int data_len;
 	int rc;
 
 	lu_cmd = &lu_task->lu_cmd;
@@ -3460,13 +3866,13 @@ istgt_iscsi_task_response(CONN_Ptr conn, ISTGT_LU_TASK_Ptr lu_task)
 	    && lu_cmd->status == ISTGT_SCSI_STATUS_GOOD) {
 		if (data_len < transfer_len) {
 			/* underflow */
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Underflow %u/%u\n",
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Underflow %zu/%u\n",
 			    data_len, transfer_len);
 			residual_len = transfer_len - data_len;
 			U_bit = 1;
 		} else if (data_len > transfer_len) {
 			/* overflow */
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Overflow %u/%u\n",
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Overflow %zu/%u\n",
 			    data_len, transfer_len);
 			residual_len = data_len - transfer_len;
 			O_bit = 1;
@@ -3495,9 +3901,9 @@ istgt_iscsi_task_response(CONN_Ptr conn, ISTGT_LU_TASK_Ptr lu_task)
 	DSET32(&rsp[16], task_tag);
 	DSET32(&rsp[20], 0); // SNACK Tag
 
+	SESS_MTX_LOCK(conn);
 	DSET32(&rsp[24], conn->StatSN);
 	conn->StatSN++;
-	SESS_MTX_LOCK(conn);
 	if (I_bit == 0) {
 		conn->sess->MaxCmdSN++;
 	}
@@ -3570,7 +3976,6 @@ istgt_iscsi_op_task(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		    conn->sess->ExpCmdSN);
 		conn->sess->ExpCmdSN = CmdSN;
 	}
-	SESS_MTX_UNLOCK(conn);
 	if (SN32_GT(ExpStatSN, conn->StatSN)) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "StatSN(%u) advanced\n",
 		    ExpStatSN);
@@ -3584,6 +3989,7 @@ istgt_iscsi_op_task(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		conn->StatSN = ExpStatSN;
 	}
 #endif
+	SESS_MTX_UNLOCK(conn);
 
 	response = 0; // Function complete.
 	switch (function) {
@@ -3675,18 +4081,22 @@ istgt_iscsi_op_task(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 
 	DSET32(&rsp[16], task_tag);
 
-	DSET32(&rsp[24], conn->StatSN);
-	conn->StatSN++;
-	SESS_MTX_LOCK(conn);
-	if (I_bit == 0) {
-		conn->sess->ExpCmdSN++;
-		conn->sess->MaxCmdSN++;
+	if (conn->use_sender == 0) {
+		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
+		if (I_bit == 0) {
+			conn->sess->ExpCmdSN++;
+			conn->sess->MaxCmdSN++;
+		}
+		DSET32(&rsp[28], conn->sess->ExpCmdSN);
+		DSET32(&rsp[32], conn->sess->MaxCmdSN);
+		SESS_MTX_UNLOCK(conn);
+	} else {
+		// update by sender
 	}
-	DSET32(&rsp[28], conn->sess->ExpCmdSN);
-	DSET32(&rsp[32], conn->sess->MaxCmdSN);
-	SESS_MTX_UNLOCK(conn);
 
-	rc = istgt_iscsi_write_pdu(conn, &rsp_pdu);
+	rc = istgt_iscsi_write_pdu_upd(conn, &rsp_pdu, I_bit);
 	if (rc < 0) {
 		ISTGT_ERRLOG("iscsi_write_pdu() failed\n");
 		return -1;
@@ -3752,10 +4162,10 @@ istgt_iscsi_op_nopout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		}
 	} else if (CmdSN != conn->sess->ExpCmdSN) {
 		SESS_MTX_UNLOCK(conn);
-		ISTGT_ERRLOG("CmdSN(%u) error\n", CmdSN);
+		ISTGT_ERRLOG("CmdSN(%u) error ExpCmdSN=%u\n",
+		    CmdSN, conn->sess->ExpCmdSN);
 		return -1;
 	}
-	SESS_MTX_UNLOCK(conn);
 	if (SN32_GT(ExpStatSN, conn->StatSN)) {
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "StatSN(%u) advanced\n",
 		    ExpStatSN);
@@ -3763,16 +4173,18 @@ istgt_iscsi_op_nopout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	}
 	{
 		uint32_t QCmdSN;
-		SESS_MTX_LOCK(conn);
+		//SESS_MTX_LOCK(conn);
 		QCmdSN = conn->sess->MaxCmdSN - conn->sess->ExpCmdSN + 1;
-		SESS_MTX_UNLOCK(conn);
+		//SESS_MTX_UNLOCK(conn);
 		QCmdSN += conn->queue_depth;
 		if (SN32_LT(ExpStatSN + QCmdSN, conn->StatSN)) {
 			ISTGT_ERRLOG("StatSN(%u/%u) QCmdSN(%u) error\n",
 			    ExpStatSN, conn->StatSN, QCmdSN);
+			SESS_MTX_UNLOCK(conn);
 			return -1;
 		}
 	}
+	SESS_MTX_UNLOCK(conn);
 
 	if (task_tag == 0xffffffffU) {
 		if (I_bit == 1) {
@@ -3812,18 +4224,22 @@ istgt_iscsi_op_nopout(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	DSET32(&rsp[16], task_tag);
 	DSET32(&rsp[20], transfer_tag);
 
-	DSET32(&rsp[24], conn->StatSN);
-	conn->StatSN++;
-	SESS_MTX_LOCK(conn);
-	if (I_bit == 0) {
-		conn->sess->ExpCmdSN++;
-		conn->sess->MaxCmdSN++;
+	if (conn->use_sender == 0) {
+		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		conn->StatSN++;
+		if (I_bit == 0) {
+			conn->sess->ExpCmdSN++;
+			conn->sess->MaxCmdSN++;
+		}
+		DSET32(&rsp[28], conn->sess->ExpCmdSN);
+		DSET32(&rsp[32], conn->sess->MaxCmdSN);
+		SESS_MTX_UNLOCK(conn);
+	} else {
+		// update by sender
 	}
-	DSET32(&rsp[28], conn->sess->ExpCmdSN);
-	DSET32(&rsp[32], conn->sess->MaxCmdSN);
-	SESS_MTX_UNLOCK(conn);
 
-	rc = istgt_iscsi_write_pdu(conn, &rsp_pdu);
+	rc = istgt_iscsi_write_pdu_upd(conn, &rsp_pdu, I_bit);
 	if (rc < 0) {
 		ISTGT_ERRLOG("iscsi_write_pdu() failed\n");
 		return -1;
@@ -3890,10 +4306,10 @@ istgt_add_transfer_task(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	ISTGT_R2T_TASK_Ptr r2t_task;
 	uint32_t transfer_len;
 	uint32_t transfer_tag;
-	int first_burst_len;
-	int max_burst_len;
-	int data_len;
-	int offset = 0;
+	size_t first_burst_len;
+	size_t max_burst_len;
+	size_t data_len;
+	size_t offset = 0;
 	int len;
 	int idx;
 	int rc;
@@ -4049,10 +4465,10 @@ istgt_iscsi_op_data(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	uint32_t ExpDataSN;
 	uint32_t DataSN;
 	uint32_t buffer_offset;
+	size_t data_len;
+	size_t alloc_len;
+	size_t offset;
 	int F_bit;
-	int data_len;
-	int alloc_len;
-	int offset;
 	int rc;
 
 	if (!conn->full_feature) {
@@ -4103,7 +4519,7 @@ istgt_iscsi_op_data(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	ExpDataSN = r2t_task->DataSN;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
-	    "StatSN=%u, ExpStatSN=%u, DataSN=%u, Offset=%u, Data=%d\n",
+	    "StatSN=%u, ExpStatSN=%u, DataSN=%u, Offset=%u, Data=%zd\n",
 	    conn->StatSN, ExpStatSN, DataSN, buffer_offset, data_len);
 	if (DataSN != ExpDataSN) {
 		ISTGT_ERRLOG("DataSN(%u) error\n", DataSN);
@@ -4158,18 +4574,22 @@ istgt_iscsi_send_r2t(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, int offset, int len
 	DSET32(&rsp[16], lu_cmd->task_tag);
 	DSET32(&rsp[20], transfer_tag);
 
-	DSET32(&rsp[24], conn->StatSN);
-	SESS_MTX_LOCK(conn);
-	DSET32(&rsp[28], conn->sess->ExpCmdSN);
-	DSET32(&rsp[32], conn->sess->MaxCmdSN);
-	SESS_MTX_UNLOCK(conn);
+	if (conn->use_sender == 0) {
+		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		DSET32(&rsp[28], conn->sess->ExpCmdSN);
+		DSET32(&rsp[32], conn->sess->MaxCmdSN);
+		SESS_MTX_UNLOCK(conn);
+	} else {
+		// update by sender
+	}
 
 	DSET32(&rsp[36], *R2TSN);
 	*R2TSN += 1;
 	DSET32(&rsp[40], (uint32_t) offset);
 	DSET32(&rsp[44], (uint32_t) len);
 
-	rc = istgt_iscsi_write_pdu(conn, &rsp_pdu);
+	rc = istgt_iscsi_write_pdu_upd(conn, &rsp_pdu, 0);
 	if (rc < 0) {
 		ISTGT_ERRLOG("iscsi_write_pdu() failed\n");
 		return -1;
@@ -4179,7 +4599,7 @@ istgt_iscsi_send_r2t(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, int offset, int len
 }
 
 int
-istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, int alloc_len, int transfer_len)
+istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, size_t alloc_len, size_t transfer_len)
 {
 	ISTGT_R2T_TASK_Ptr r2t_task;
 	ISCSI_PDU data_pdu;
@@ -4195,13 +4615,13 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 	uint32_t DataSN;
 	uint32_t buffer_offset;
 	uint32_t R2TSN;
+	size_t data_len;
+	size_t segment_len;
+	size_t first_burst_len;
+	size_t max_burst_len;
+	size_t offset;
 	int immediate, opcode;
 	int F_bit;
-	int data_len;
-	int segment_len;
-	int first_burst_len;
-	int max_burst_len;
-	int offset;
 	int len;
 	int r2t_flag;
 	int r2t_offset;
@@ -4230,7 +4650,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, 
-	    "Transfer=%d, First=%d, Max=%d, Segment=%d\n",
+	    "Transfer=%zd, First=%zd, Max=%zd, Segment=%zd\n",
 	    transfer_len, data_len, max_burst_len, segment_len);
 
 	r2t_task = istgt_get_transfer_task(conn, current_transfer_tag);
@@ -4250,7 +4670,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 		istgt_free_transfer_task(r2t_task);
 
 		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-		    "Using R2T(%d) offset=%d, DataSN=%d\n",
+		    "Using R2T(%d) offset=%zd, DataSN=%d\n",
 		    conn->pending_r2t, offset, ExpDataSN);
 
 		rc = istgt_queue_count(&conn->pending_pdus);
@@ -4302,7 +4722,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 		data_pdu.copy_pdu = 0;
 		do {
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-			    "Transfer=%d, Offset=%d, Len=%d\n",
+			    "Transfer=%zd, Offset=%zd, Len=%d\n",
 			    transfer_len, offset, len);
 			/* send R2T if required */
 			if (r2t_flag == 0
@@ -4330,7 +4750,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 				r2t_sent = 1;
 				ExpDataSN = 0;
 				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, 
-				    "R2T, Transfer=%d, Offset=%d, Len=%d\n",
+				    "R2T, Transfer=%zd, Offset=%zd, Len=%d\n",
 				    transfer_len, offset, len);
 			} else {
 				r2t_sent = 0;
@@ -4434,7 +4854,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 
 			ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
 			    "StatSN=%u, "
-			    "ExpStatSN=%u, DataSN=%u, Offset=%u, Data=%d\n",
+			    "ExpStatSN=%u, DataSN=%u, Offset=%u, Data=%zd\n",
 			    conn->StatSN,
 			    ExpStatSN, DataSN, buffer_offset, data_len);
 			if (DataSN != ExpDataSN) {
@@ -4488,7 +4908,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 			ExpDataSN++;
 
 			if (r2t_flag == 0 && (offset > first_burst_len)) {
-				ISTGT_ERRLOG("data_len(%d) > first_burst_length(%d)",
+				ISTGT_ERRLOG("data_len(%zd) > first_burst_length(%zd)",
 				    offset, first_burst_len);
 				goto error_return;
 			}
@@ -4534,7 +4954,7 @@ istgt_iscsi_transfer_out(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, uint8_t *data, 
 	}
 
 r2t_return:
-	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Transfered=%d, Offset=%d\n",
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Transfered=%zd, Offset=%zd\n",
 	    transfer_len, offset);
 
 	return 0;
@@ -4586,13 +5006,17 @@ istgt_iscsi_send_nopin(CONN_Ptr conn)
 	DSET32(&rsp[16], task_tag);
 	DSET32(&rsp[20], transfer_tag);
 
-	DSET32(&rsp[24], conn->StatSN);
-	SESS_MTX_LOCK(conn);
-	DSET32(&rsp[28], conn->sess->ExpCmdSN);
-	DSET32(&rsp[32], conn->sess->MaxCmdSN);
-	SESS_MTX_UNLOCK(conn);
+	if (conn->use_sender == 0) {
+		SESS_MTX_LOCK(conn);
+		DSET32(&rsp[24], conn->StatSN);
+		DSET32(&rsp[28], conn->sess->ExpCmdSN);
+		DSET32(&rsp[32], conn->sess->MaxCmdSN);
+		SESS_MTX_UNLOCK(conn);
+	} else {
+		// update by sender
+	}
 
-	rc = istgt_iscsi_write_pdu(conn, &rsp_pdu);
+	rc = istgt_iscsi_write_pdu_upd(conn, &rsp_pdu, 0);
 	if (rc < 0) {
 		ISTGT_ERRLOG("iscsi_write_pdu() failed\n");
 		return -1;
@@ -4711,7 +5135,7 @@ wait_all_task(CONN_Ptr conn)
 		ISTGT_ERRLOG("kqueue() failed\n");
 		return;
 	}
-	EV_SET(&kev, conn->task_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ISTGT_EV_SET(&kev, conn->task_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
 	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
 	if (rc == -1) {
 		ISTGT_ERRLOG("kevent() failed\n");
@@ -4761,7 +5185,7 @@ wait_all_task(CONN_Ptr conn)
 #endif /* ISTGT_USE_KQUEUE */
 
 #ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == conn->task_pipe[0]) {
+		if (kev.ident == (uintptr_t)conn->task_pipe[0]) {
 			if (kev.flags & (EV_EOF|EV_ERROR)) {
 				break;
 			}
@@ -4963,8 +5387,13 @@ sender(void *arg)
 				if (rc < 0) {
 					lu_task->error = 1;
 					ISTGT_ERRLOG(
-						"iscsi_task_response() failed on %s(%s)\n",
+						"iscsi_task_response() CmdSN=%u failed"
+						" on %s(%s)\n", lu_task->lu_cmd.CmdSN,
 						conn->target_port, conn->initiator_port);
+					rc = write(conn->task_pipe[1], "E", 1);
+					if(rc < 0 || rc != 1) {
+						ISTGT_ERRLOG("write() failed\n");
+					}
 					break;
 				}
 				rc = istgt_lu_destroy_task(lu_task);
@@ -4973,6 +5402,7 @@ sender(void *arg)
 					break;
 				}
 			} else if (lu_task->type == ISTGT_LU_TASK_REQPDU) {
+			reqpdu:
 				/* send PDU */
 				rc = istgt_iscsi_write_pdu_internal(lu_task->conn,
 				    lu_task->lu_cmd.pdu);
@@ -4982,10 +5412,29 @@ sender(void *arg)
 						"iscsi_write_pdu() failed on %s(%s)\n",
 						lu_task->conn->target_port,
 						lu_task->conn->initiator_port);
+					rc = write(conn->task_pipe[1], "E", 1);
+					if(rc < 0 || rc != 1) {
+						ISTGT_ERRLOG("write() failed\n");
+					}
 					break;
 				}
 				/* free allocated memory by caller */
 				xfree(lu_task);
+			} else if (lu_task->type == ISTGT_LU_TASK_REQUPDPDU) {
+				rc = istgt_update_pdu(lu_task->conn, &lu_task->lu_cmd);
+				if (rc < 0) {
+					lu_task->error = 1;
+					ISTGT_ERRLOG(
+						"update_pdu() failed on %s(%s)\n",
+						lu_task->conn->target_port,
+						lu_task->conn->initiator_port);
+					rc = write(conn->task_pipe[1], "E", 1);
+					if(rc < 0 || rc != 1) {
+						ISTGT_ERRLOG("write() failed\n");
+					}
+					break;
+				}
+				goto reqpdu;
 			} else {
 				ISTGT_ERRLOG("Unknown task type %x\n", lu_task->type);
 				rc = -1;
@@ -5035,14 +5484,18 @@ worker(void *arg)
 		return NULL;
 	}
 	conn->kq = kq;
-	EV_SET(&kev, conn->sock, EVFILT_READ, EV_ADD, 0, 0, NULL);
+#if defined (ISTGT_USE_IOVEC) && defined (NOTE_LOWAT)
+	ISTGT_EV_SET(&kev, conn->sock, EVFILT_READ, EV_ADD, NOTE_LOWAT, ISCSI_BHS_LEN, NULL);
+#else
+	ISTGT_EV_SET(&kev, conn->sock, EVFILT_READ, EV_ADD, 0, 0, NULL);
+#endif
 	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
 	if (rc == -1) {
 		ISTGT_ERRLOG("kevent() failed\n");
 		close(kq);
 		return NULL;
 	}
-	EV_SET(&kev, conn->task_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ISTGT_EV_SET(&kev, conn->task_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
 	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
 	if (rc == -1) {
 		ISTGT_ERRLOG("kevent() failed\n");
@@ -5050,19 +5503,21 @@ worker(void *arg)
 		return NULL;
 	}
 
-	EV_SET(&kev, SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-	if (rc == -1) {
-		ISTGT_ERRLOG("kevent() failed\n");
-		close(kq);
-		return NULL;
-	}
-	EV_SET(&kev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-	if (rc == -1) {
-		ISTGT_ERRLOG("kevent() failed\n");
-		close(kq);
-		return NULL;
+	if (!conn->istgt->daemon) {
+		ISTGT_EV_SET(&kev, SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
+		if (rc == -1) {
+			ISTGT_ERRLOG("kevent() failed\n");
+			close(kq);
+			return NULL;
+		}
+		ISTGT_EV_SET(&kev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
+		if (rc == -1) {
+			ISTGT_ERRLOG("kevent() failed\n");
+			close(kq);
+			return NULL;
+		}
 	}
 #else
 	memset(&fds, 0, sizeof fds);
@@ -5070,8 +5525,6 @@ worker(void *arg)
 	fds[0].events = POLLIN;
 	fds[1].fd = conn->task_pipe[0];
 	fds[1].events = POLLIN;
-
-	nopin_timer = conn->nopininterval;
 #endif /* ISTGT_USE_KQUEUE */
 
 	conn->pdu.ahs = NULL;
@@ -5108,6 +5561,9 @@ worker(void *arg)
 	pthread_sigmask(SIG_UNBLOCK, &signew, &sigold);
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "loop start (%d)\n", conn->id);
+#ifndef ISTGT_USE_KQUEUE
+	nopin_timer = conn->nopininterval;
+#endif /* !ISTGT_USE_KQUEUE */
 	while (1) {
 		/* check exit request */
 		if (conn->sess != NULL) {
@@ -5187,6 +5643,7 @@ worker(void *arg)
 		}
 		if (rc == 0) {
 			/* no fds */
+			//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "poll TIMEOUT\n");
 			if (nopin_timer > 0) {
 				nopin_timer -= POLLWAIT;
 				if (nopin_timer <= 0) {
@@ -5205,7 +5662,7 @@ worker(void *arg)
 
 		/* on socket */
 #ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == conn->sock) {
+		if (kev.ident == (uintptr_t)conn->sock) {
 			if (kev.flags & (EV_EOF|EV_ERROR)) {
 				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 				    "kevent EOF/ERROR\n");
@@ -5220,7 +5677,9 @@ worker(void *arg)
 			conn->pdu.copy_pdu = 0;
 			rc = istgt_iscsi_read_pdu(conn, &conn->pdu);
 			if (rc < 0) {
-				ISTGT_ERRLOG("conn->state = %d\n", conn->state);
+				if (conn->state != CONN_STATE_EXITING) {
+					ISTGT_ERRLOG("conn->state = %d\n", conn->state);
+				}
 				if (conn->state != CONN_STATE_RUNNING) {
 					if (errno == EINPROGRESS) {
 						sleep(1);
@@ -5317,7 +5776,7 @@ worker(void *arg)
 
 		/* execute on task queue */
 #ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == conn->task_pipe[0]) {
+		if (kev.ident == (uintptr_t)conn->task_pipe[0]) {
 			if (kev.flags & (EV_EOF|EV_ERROR)) {
 				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 				    "kevent EOF/ERROR\n");
@@ -5336,6 +5795,11 @@ worker(void *arg)
 			rc = read(conn->task_pipe[0], tmp, 1);
 			if (rc < 0 || rc == 0 || rc != 1) {
 				ISTGT_ERRLOG("read() failed\n");
+				break;
+			}
+			if (tmp[0] == 'E') {
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "exit request (%d)\n",
+				    conn->id);
 				break;
 			}
 
@@ -5378,13 +5842,11 @@ worker(void *arg)
 						lu_task = NULL;
 						conn->exec_lu_task = NULL;
 					} else {
-						MTX_LOCK(&lu_task->trans_mutex);
 						//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 						//    "Task Write Trans START\n");
 						rc = istgt_iscsi_task_transfer_out(conn, lu_task);
 						if (rc < 0) {
 							lu_task->error = 1;
-							MTX_UNLOCK(&lu_task->trans_mutex);
 							ISTGT_ERRLOG("iscsi_task_transfer_out() failed on %s(%s)\n",
 							    conn->target_port,
 							    conn->initiator_port);
@@ -5393,6 +5855,7 @@ worker(void *arg)
 						//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 						//    "Task Write Trans END\n");
 
+						MTX_LOCK(&lu_task->trans_mutex);
 						lu_task->req_transfer_out = 0;
 
 						/* need response after execution */
@@ -5400,11 +5863,10 @@ worker(void *arg)
 						if (conn->use_sender == 0) {
 							conn->running_tasks++;
 						}
-						MTX_UNLOCK(&lu_task->trans_mutex);
 
 						rc = pthread_cond_broadcast(&lu_task->trans_cond);
+						MTX_UNLOCK(&lu_task->trans_mutex);
 						if (rc != 0) {
-							//MTX_UNLOCK(&lu_task->trans_mutex);
 							ISTGT_ERRLOG("cond_broadcast() failed\n");
 							break;
 						}
@@ -5476,8 +5938,11 @@ worker(void *arg)
 	wait_all_task(conn);
 
 	if (conn->use_sender) {
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "stop sender thread (%d)\n", conn->id);
 		/* stop sender thread */
+		MTX_LOCK(&conn->result_queue_mutex);
 		rc = pthread_cond_broadcast(&conn->result_queue_cond);
+		MTX_UNLOCK(&conn->result_queue_mutex);
 		if (rc != 0) {
 			ISTGT_ERRLOG("cond_broadcast() failed\n");
 			/* ignore errors */
@@ -5509,7 +5974,7 @@ worker(void *arg)
 }
 
 int
-istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr *sa, socklen_t salen)
+istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr *sa, socklen_t salen __attribute__((__unused__)))
 {
 	char buf[MAX_TMPBUF];
 	CONN_Ptr conn;
@@ -5651,6 +6116,14 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 		ISTGT_ERRLOG("istgt_set_sendtimeo() failed\n");
 		goto error_return;
 	}
+#if defined (ISTGT_USE_IOVEC)
+	/* set low water mark */
+	rc = istgt_set_recvlowat(conn->sock, ISCSI_BHS_LEN);
+	if (rc != 0) {
+		ISTGT_ERRLOG("istgt_set_recvlowat() failed\n");
+		goto error_return;
+	}
+#endif
 
 	rc = pipe(conn->task_pipe);
 	if (rc != 0) {
@@ -5659,12 +6132,12 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 		conn->task_pipe[1] = -1;
 		goto error_return;
 	}
-	rc = pthread_mutex_init(&conn->task_queue_mutex, NULL);
+	rc = pthread_mutex_init(&conn->task_queue_mutex, &istgt->mutex_attr);
 	if (rc != 0) {
 		ISTGT_ERRLOG("mutex_init() failed\n");
 		goto error_return;
 	}
-	rc = pthread_mutex_init(&conn->result_queue_mutex, NULL);
+	rc = pthread_mutex_init(&conn->result_queue_mutex, &istgt->mutex_attr);
 	if (rc != 0) {
 		ISTGT_ERRLOG("mutex_init() failed\n");
 		goto error_return;
@@ -5684,7 +6157,7 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 		ISTGT_ERRLOG("cond_init() failed\n");
 		goto error_return;
 	}
-	rc = pthread_mutex_init(&conn->r2t_mutex, NULL);
+	rc = pthread_mutex_init(&conn->r2t_mutex, &istgt->mutex_attr);
 	if (rc != 0) {
 		ISTGT_ERRLOG("mutex_init() failed\n");
 		goto error_return;
@@ -5761,6 +6234,7 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 		istgt_iscsi_param_free(conn->params);
 		istgt_queue_destroy(&conn->pending_pdus);
 		istgt_queue_destroy(&conn->task_queue);
+		istgt_queue_destroy(&conn->result_queue);
 		xfree(conn->portal.label);
 		xfree(conn->portal.host);
 		xfree(conn->portal.port);
@@ -6388,6 +6862,31 @@ istgt_get_active_conns(void)
 	return num;
 }
 
+int
+istgt_stop_conns(void)
+{
+	CONN_Ptr conn;
+	char tmp[1];
+	int rc;
+	int i;
+
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "istgt_stop_conns\n");
+	tmp[0] = 'E';
+	MTX_LOCK(&g_conns_mutex);
+	for (i = 0; i < g_nconns; i++) {
+		conn = g_conns[i];
+		if (conn == NULL)
+			continue;
+		rc = write(conn->task_pipe[1], tmp, 1);
+		if(rc < 0 || rc != 1) {
+			ISTGT_ERRLOG("write() failed\n");
+			/* ignore error */
+		}
+	}
+	MTX_UNLOCK(&g_conns_mutex);
+	return 0;
+}
+
 CONN_Ptr
 istgt_find_conn(const char *initiator_port, const char *target_name, uint16_t tsih)
 {
@@ -6463,7 +6962,7 @@ istgt_iscsi_init(ISTGT_Ptr istgt)
 }
 
 int
-istgt_iscsi_shutdown(ISTGT_Ptr istgt)
+istgt_iscsi_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)))
 {
 	CONN_Ptr conn;
 	int retry = 10;
@@ -6515,6 +7014,11 @@ istgt_iscsi_shutdown(ISTGT_Ptr istgt)
 	if (rc != 0) {
 		ISTGT_ERRLOG("mutex_destroy() failed\n");
 		return -1;
+	}
+
+	if (num == 0) {
+		xfree(g_conns);
+		g_conns = NULL;
 	}
 
 	return 0;
