@@ -405,6 +405,23 @@ AC_TRY_LINK([
 )
 AC_MSG_RESULT($gcc_atomic)
 
+# Elasto cloud
+AC_ARG_WITH([elasto],
+	    [AS_HELP_STRING([--with-elasto],
+	    [Enable experimental support for Elasto cloud devices])],
+	    [],
+	    [with_elasto=no])
+
+ELASTO=
+AS_IF([test "x$with_elasto" != xno],
+      [AC_CHECK_LIB([elasto_file], [elasto_fopen],
+		    [AC_SUBST([ELASTO], ["-lelasto_file"])
+		     AC_DEFINE([HAVE_ELASTO], [1],
+			       [Define if you have Elasto])
+		    ],
+		    [AC_MSG_FAILURE([--with-elasto was given, but test for Elasto failed])],
+		    [])])
+
 AC_CONFIG_FILES([Makefile src/Makefile etc/Makefile doc/Makefile])
 AC_CONFIG_FILES([src/build.h])
 AC_OUTPUT
