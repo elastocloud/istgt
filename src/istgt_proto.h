@@ -150,6 +150,10 @@ void istgt_lu_disk_aio_done(siginfo_t *info);
 int istgt_lu_disk_vbox_lun_init(ISTGT_LU_DISK *spec, ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
 int istgt_lu_disk_vbox_lun_shutdown(ISTGT_LU_DISK *spec, ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
 
+/* istgt_lu_disk_elasto.c */
+int istgt_lu_disk_elasto_lun_init(ISTGT_LU_DISK *spec, ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
+int istgt_lu_disk_elasto_lun_shutdown(ISTGT_LU_DISK *spec, ISTGT_Ptr istgt, ISTGT_LU_Ptr lu);
+
 /* istgt_lu_dvd.c */
 struct istgt_lu_dvd_t;
 int istgt_lu_dvd_media_present(struct istgt_lu_dvd_t *spec);

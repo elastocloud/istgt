@@ -36,6 +36,7 @@ CFLAGS  += -Wredundant-decls -Wshadow -Wstrict-prototypes -Wwrite-strings
 
 source   = istgt.c istgt_iscsi.c istgt_iscsi_param.c \
 	istgt_lu.c istgt_lu_disk.c istgt_lu_disk_vbox.c \
+	istgt_lu_disk_elasto.c \
 	istgt_lu_dvd.c istgt_lu_tape.c istgt_lu_pass.c istgt_lu_ctl.c \
 	istgt_log.c istgt_conf.c istgt_sock.c istgt_misc.c \
 	istgt_queue.c istgt_crc32c.c istgt_md5.c md5.c

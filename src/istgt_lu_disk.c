@@ -469,7 +469,8 @@ istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 			lu->lun[i].spec = NULL;
 			continue;
 		}
-		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE) {
+		if ((lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE)
+		 && (lu->lun[i].type != ISTGT_LU_LUN_TYPE_CLOUD)) {
 			ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
 			return -1;
 		}
@@ -566,9 +567,17 @@ istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 		}
 #endif /* HAVE_UUID_H */
 
-		spec->file = lu->lun[i].u.storage.file;
-		spec->size = lu->lun[i].u.storage.size;
-		spec->disktype = istgt_get_disktype_by_ext(spec->file);
+		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_CLOUD) {
+			spec->file = lu->lun[i].u.elasto.cloud_path;
+			spec->size = lu->lun[i].u.elasto.size;
+			spec->disktype = "ELASTO";
+			spec->ps_file = lu->lun[i].u.elasto.ps_file;
+		} else {
+			/* storage type */
+			spec->file = lu->lun[i].u.storage.file;
+			spec->size = lu->lun[i].u.storage.size;
+			spec->disktype = istgt_get_disktype_by_ext(spec->file);
+		}
 		if (strcasecmp(spec->disktype, "VDI") == 0
 		    || strcasecmp(spec->disktype, "VHD") == 0
 		    || strcasecmp(spec->disktype, "VMDK") == 0
@@ -632,7 +641,7 @@ istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 			    lu->num, i, spec->file, spec->size);
 			printf("LU%d: LUN%d %"PRIu64" blocks, %"PRIu64" bytes/block\n",
 			    lu->num, i, spec->blockcnt, spec->blocklen);
-			
+
 			flags = lu->readonly ? O_RDONLY : O_RDWR;
 			newfile = 0;
 			rc = spec->open(spec, flags, 0666);
@@ -657,6 +666,13 @@ istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 			rc = spec->setcache(spec);
 			if (rc < 0) {
 				ISTGT_ERRLOG("LU%d: LUN%d: setcache error\n", lu->num, i);
+				goto error_return;
+			}
+		} else if (strcasecmp(spec->disktype, "ELASTO") == 0) {
+			rc = istgt_lu_disk_elasto_lun_init(spec, istgt, lu);
+			if (rc < 0) {
+				ISTGT_ERRLOG("LU%d: LUN%d: lu_disk_elasto_lun_init() failed\n",
+				    lu->num, i);
 				goto error_return;
 			}
 		} else {
@@ -747,7 +763,8 @@ istgt_lu_disk_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr
 			    lu->num, i);
 			continue;
 		}
-		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE) {
+		if ((lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE)
+		 && (lu->lun[i].type != ISTGT_LU_LUN_TYPE_CLOUD)) {
 			ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
 			return -1;
 		}
@@ -776,6 +793,13 @@ istgt_lu_disk_shutdown(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr
 			rc = spec->close(spec);
 			if (rc < 0) {
 				//ISTGT_ERRLOG("LU%d: lu_disk_close() failed\n", lu->num);
+				/* ignore error */
+			}
+		} else if (strcasecmp(spec->disktype, "ELASTO") == 0) {
+			rc = istgt_lu_disk_elasto_lun_shutdown(spec, istgt, lu);
+			if (rc < 0) {
+				ISTGT_ERRLOG("LU%d: lu_disk_elasto_lun_shutdown() failed\n",
+				    lu->num);
 				/* ignore error */
 			}
 		} else {
@@ -4614,7 +4638,8 @@ istgt_lu_disk_reset(ISTGT_LU_Ptr lu, int lun)
 	if (lu->lun[lun].type == ISTGT_LU_LUN_TYPE_NONE) {
 		return -1;
 	}
-	if (lu->lun[lun].type != ISTGT_LU_LUN_TYPE_STORAGE) {
+	if ((lu->lun[lun].type != ISTGT_LU_LUN_TYPE_STORAGE)
+	 && (lu->lun[lun].type != ISTGT_LU_LUN_TYPE_CLOUD)) {
 		return -1;
 	}
 	spec = (ISTGT_LU_DISK *) lu->lun[lun].spec;
@@ -4794,7 +4819,8 @@ istgt_lu_disk_queue_clear_IT(CONN_Ptr conn, ISTGT_LU_Ptr lu)
 #endif
 			continue;
 		}
-		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE) {
+		if ((lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE)
+		 && (lu->lun[i].type != ISTGT_LU_LUN_TYPE_CLOUD)) {
 			ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
 			return -1;
 		}
@@ -4874,7 +4900,8 @@ istgt_lu_disk_queue_clear_all(ISTGT_LU_Ptr lu, int lun)
 	if (lu->lun[lun].type == ISTGT_LU_LUN_TYPE_NONE) {
 		return -1;
 	}
-	if (lu->lun[lun].type != ISTGT_LU_LUN_TYPE_STORAGE) {
+	if ((lu->lun[lun].type != ISTGT_LU_LUN_TYPE_STORAGE)
+	 && (lu->lun[lun].type != ISTGT_LU_LUN_TYPE_CLOUD)) {
 		return -1;
 	}
 	spec = (ISTGT_LU_DISK *) lu->lun[lun].spec;
@@ -5114,7 +5141,8 @@ istgt_lu_disk_queue_count(ISTGT_LU_Ptr lu, int *lun)
 		if (lu->lun[i].type == ISTGT_LU_LUN_TYPE_NONE) {
 			goto next_lun;
 		}
-		if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE) {
+		if ((lu->lun[i].type != ISTGT_LU_LUN_TYPE_STORAGE)
+		 && (lu->lun[i].type != ISTGT_LU_LUN_TYPE_CLOUD)) {
 			ISTGT_ERRLOG("LU%d: unsupported type\n", lu->num);
 			goto next_lun;
 		}

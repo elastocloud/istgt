@@ -120,6 +120,7 @@ typedef enum {
 	ISTGT_LU_LUN_TYPE_STORAGE = 2,
 	ISTGT_LU_LUN_TYPE_REMOVABLE = 3,
 	ISTGT_LU_LUN_TYPE_SLOT = 4,
+	ISTGT_LU_LUN_TYPE_CLOUD = 5,
 } ISTGT_LU_LUN_TYPE;
 
 typedef struct istgt_lu_device_t {
@@ -149,6 +150,12 @@ typedef struct istgt_lu_slot_t {
 	uint64_t size[MAX_LU_LUN_SLOT];
 } ISTGT_LU_SLOT;
 
+typedef struct istgt_lu_elasto_t {
+	char *cloud_path;
+	char *ps_file;
+	uint64_t size;
+} ISTGT_LU_ELASTO;
+
 typedef struct istgt_lu_lun_t {
 	int type;
 	union {
@@ -156,6 +163,7 @@ typedef struct istgt_lu_lun_t {
 		ISTGT_LU_STORAGE storage;
 		ISTGT_LU_REMOVABLE removable;
 		ISTGT_LU_SLOT slot;
+		ISTGT_LU_ELASTO elasto;
 	} u;
 	int rotationrate;
 	int formfactor;
@@ -349,6 +357,9 @@ typedef struct istgt_lu_disk_t {
 	uint64_t size;
 	uint64_t blocklen;
 	uint64_t blockcnt;
+
+	/* elasto */
+	const char *ps_file;
 
 #ifdef HAVE_UUID_H
 	uuid_t uuid;

@@ -599,6 +599,20 @@ istgt_uctl_cmd_list(UCTL_Ptr uctl)
 			    mfile);
 			rc = istgt_uctl_writeline(uctl);
 			break;
+		case ISTGT_LU_LUN_TYPE_CLOUD:
+			mfile = llp->u.elasto.cloud_path;
+			snprintf(workp, worksize, "%"PRIu64,
+			    llp->u.elasto.size);
+			msize = workp;
+			worksize -= strlen(msize) + 1;
+			workp += strlen(msize) + 1;
+
+			istgt_uctl_snprintf(uctl, "%s lun%u %s \"%s\" %s\n",
+			    uctl->cmd, lun_i,
+			    "cloud",
+			    mfile, msize);
+			rc = istgt_uctl_writeline(uctl);
+			break;
 		case ISTGT_LU_LUN_TYPE_SLOT:
 		default:
 			MTX_UNLOCK(&uctl->istgt->mutex);

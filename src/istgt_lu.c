@@ -1834,6 +1834,42 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 				    lu->lun[i].u.slot.file[slot],
 				    lu->lun[i].u.slot.size[slot],
 				    lu->lun[i].u.slot.flags[slot]);
+			} else if (strcasecmp(val, "Cloud") == 0) {
+				if (lu->lun[i].type != ISTGT_LU_LUN_TYPE_NONE) {
+					ISTGT_ERRLOG("LU%d: duplicate LUN%d\n", lu->num, i);
+					goto error_return;
+				}
+				lu->lun[i].type = ISTGT_LU_LUN_TYPE_CLOUD;
+
+				file = istgt_get_nmval(sp, buf, j, 1);
+				if (file == NULL) {
+					ISTGT_ERRLOG("LU%d: LUN%d: format error\n", lu->num, i);
+					goto error_return;
+				}
+				lu->lun[i].u.elasto.cloud_path = xstrdup(file);
+				file = istgt_get_nmval(sp, buf, j, 2);
+				size = istgt_get_nmval(sp, buf, j, 3);
+				if (file == NULL || size == NULL) {
+					ISTGT_ERRLOG("LU%d: LUN%d: format error\n", lu->num, i);
+					goto error_return;
+				}
+				lu->lun[i].u.elasto.ps_file = xstrdup(file);
+				if (strcasecmp(size, "Auto") == 0
+				    || strcasecmp(size, "Size") == 0) {
+					/* not supported yet */
+					lu->lun[i].u.elasto.size = 0;
+				} else {
+					lu->lun[i].u.elasto.size = istgt_lu_parse_size(size);
+				}
+				if (lu->lun[i].u.elasto.size == 0) {
+					ISTGT_ERRLOG("LU%d: LUN%d: invalid size (%s)\n", lu->num, i, size);
+					goto error_return;
+				}
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				    "Cloud ps_file=%s, cloud_path=%s, size=%"PRIu64"\n",
+				    lu->lun[i].u.elasto.ps_file,
+				    lu->lun[i].u.elasto.cloud_path,
+				    lu->lun[i].u.elasto.size);
 			} else if (strncasecmp(val, "Option", 6) == 0) {
 				key = istgt_get_nmval(sp, buf, j, 1);
 				val = istgt_get_nmval(sp, buf, j, 2);
@@ -1960,6 +1996,10 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 				xfree(lu->lun[i].u.slot.file[j]);
 			}
 			break;
+		case ISTGT_LU_LUN_TYPE_CLOUD:
+			xfree(lu->lun[i].u.elasto.cloud_path);
+			xfree(lu->lun[i].u.elasto.ps_file);
+			break;
 		case ISTGT_LU_LUN_TYPE_NONE:
 		default:
 			break;
@@ -2024,6 +2064,10 @@ istgt_lu_del_unit(ISTGT_Ptr istgt, ISTGT_LU_Ptr lu)
 			for (j = 0; j < lu->lun[i].u.slot.maxslot; j++) {
 				xfree(lu->lun[i].u.slot.file[j]);
 			}
+			break;
+		case ISTGT_LU_LUN_TYPE_CLOUD:
+			xfree(lu->lun[i].u.elasto.cloud_path);
+			xfree(lu->lun[i].u.elasto.ps_file);
 			break;
 		case ISTGT_LU_LUN_TYPE_NONE:
 		default:
