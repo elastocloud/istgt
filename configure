@@ -620,6 +620,7 @@ ac_includes_default="\
 #endif"
 
 ac_subst_vars='LTLIBOBJS
+ELASTO
 ALLOW_SYMLINK_DEVICE
 DEBUG
 mediadir
@@ -704,6 +705,7 @@ with_logfacility
 with_logpriority
 with_vbox
 with_vboxlib
+with_elasto
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1344,6 +1346,7 @@ Optional Packages:
   --with-logpriority      syslog priority to log with (default "info")
   --with-vbox=INC         VirtualBox include
   --with-vboxlib=LIB      VirtualBox lib
+  --with-elasto           Enable experimental support for Elasto cloud devices
 
 Some influential environment variables:
   CC          C compiler command
@@ -5208,6 +5211,70 @@ rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $gcc_atomic" >&5
 $as_echo "$gcc_atomic" >&6; }
+
+# Elasto cloud
+
+# Check whether --with-elasto was given.
+if test "${with_elasto+set}" = set; then :
+  withval=$with_elasto;
+else
+  with_elasto=no
+fi
+
+
+ELASTO=
+if test "x$with_elasto" != xno; then :
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for elasto_fopen in -lelasto_file" >&5
+$as_echo_n "checking for elasto_fopen in -lelasto_file... " >&6; }
+if ${ac_cv_lib_elasto_file_elasto_fopen+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lelasto_file  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char elasto_fopen ();
+int
+main ()
+{
+return elasto_fopen ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_elasto_file_elasto_fopen=yes
+else
+  ac_cv_lib_elasto_file_elasto_fopen=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_elasto_file_elasto_fopen" >&5
+$as_echo "$ac_cv_lib_elasto_file_elasto_fopen" >&6; }
+if test "x$ac_cv_lib_elasto_file_elasto_fopen" = xyes; then :
+  ELASTO="-lelasto_file"
+
+
+$as_echo "#define HAVE_ELASTO 1" >>confdefs.h
+
+
+else
+  { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error $? "--with-elasto was given, but test for Elasto failed
+See \`config.log' for more details" "$LINENO" 5; }
+fi
+
+fi
 
 ac_config_files="$ac_config_files Makefile src/Makefile etc/Makefile doc/Makefile"
 
