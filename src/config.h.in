@@ -33,6 +33,9 @@
 /* Define 1 if you have the function. */
 #undef HAVE_ATOMIC_SWAP_UINT
 
+/* Define if you have Elasto */
+#undef HAVE_ELASTO
+
 /* Define to 1 if you have the <fcntl.h> header file. */
 #undef HAVE_FCNTL_H
 
@@ -53,12 +56,6 @@
 
 /* Define to 1 if you have the `cam' library (-lcam). */
 #undef HAVE_LIBCAM
-
-/* Define to 1 if you have the `crypto' library (-lcrypto). */
-#undef HAVE_LIBCRYPTO
-
-/* Define to 1 if you have the `md' library (-lmd). */
-#undef HAVE_LIBMD
 
 /* Define to 1 if you have the `pthread' library (-lpthread). */
 #undef HAVE_LIBPTHREAD
