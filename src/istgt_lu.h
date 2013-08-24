@@ -150,10 +150,15 @@ typedef struct istgt_lu_slot_t {
 	uint64_t size[MAX_LU_LUN_SLOT];
 } ISTGT_LU_SLOT;
 
+typedef enum {
+	ISTGT_LU_ELASTO_FLAG_HTTP = 0x00000001,
+} ISTGT_LU_ELASTO_FLAG;
+
 typedef struct istgt_lu_elasto_t {
 	char *cloud_path;
 	char *ps_file;
 	uint64_t size;
+	uint64_t flags;
 } ISTGT_LU_ELASTO;
 
 typedef struct istgt_lu_lun_t {
@@ -359,6 +364,7 @@ typedef struct istgt_lu_disk_t {
 	uint64_t blockcnt;
 
 	/* elasto */
+	uint64_t eflags;
 	const char *ps_file;
 
 #ifdef HAVE_UUID_H

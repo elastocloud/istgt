@@ -572,6 +572,7 @@ istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 			spec->size = lu->lun[i].u.elasto.size;
 			spec->disktype = "ELASTO";
 			spec->ps_file = lu->lun[i].u.elasto.ps_file;
+			spec->eflags = lu->lun[i].u.elasto.flags;
 		} else {
 			/* storage type */
 			spec->file = lu->lun[i].u.storage.file;

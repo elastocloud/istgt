@@ -924,6 +924,31 @@ istgt_lu_parse_media_size(const char *file, const char *size, int *flags)
 	return msize;
 }
 
+static uint64_t
+istgt_lu_parse_elasto_flags(const char *flags)
+{
+	char buf[MAX_TMPBUF];
+	const char *delim = ",";
+	char *next_p;
+	char *p;
+	uint64_t elasto_flags = 0;
+
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "elasto_flags=%s\n", flags);
+	strlcpy(buf, flags, MAX_TMPBUF);
+	next_p = buf;
+	while ((p = strsep(&next_p, delim)) != NULL) {
+		if (strcasecmp(p, "http") == 0) {
+			elasto_flags |= ISTGT_LU_ELASTO_FLAG_HTTP;
+		} else if (strcasecmp(p, "https") == 0) {
+			elasto_flags &= ~ISTGT_LU_ELASTO_FLAG_HTTP;
+		} else {
+			ISTGT_ERRLOG("ignoring unknown elasto flag %.64s\n", p);
+		}
+	}
+
+	return elasto_flags;
+}
+
 PORTAL_GROUP *
 istgt_lu_find_portalgroup(ISTGT_Ptr istgt, int tag)
 {
@@ -1865,6 +1890,12 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 					ISTGT_ERRLOG("LU%d: LUN%d: invalid size (%s)\n", lu->num, i, size);
 					goto error_return;
 				}
+				flags = istgt_get_nmval(sp, buf, j, 4);
+				if (flags == NULL) {
+					ISTGT_ERRLOG("LU%d: LUN%d: format error, no flags\n", lu->num, i);
+					goto error_return;
+				}
+				lu->lun[i].u.elasto.flags = istgt_lu_parse_elasto_flags(flags);
 				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 				    "Cloud ps_file=%s, cloud_path=%s, size=%"PRIu64"\n",
 				    lu->lun[i].u.elasto.ps_file,

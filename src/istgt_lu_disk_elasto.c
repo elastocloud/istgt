@@ -79,7 +79,8 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 
 	auth.type = ELASTO_FILE_AZURE;
 	auth.az.ps_path = xstrdup(spec->ps_file);
-	auth.insecure_http = true;
+	auth.insecure_http
+		= (spec->eflags & ISTGT_LU_ELASTO_FLAG_HTTP) ? true : false;
 
 	ret = elasto_fcreate(&auth,
 			     spec->file,
