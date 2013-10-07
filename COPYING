@@ -1,0 +1,16 @@
+Format-Specification: http://anonscm.debian.org/viewvc/dep/web/deps/dep5/copyright-format.xml?revision=279&view=markup
+Name: istgt
+Maintainer: David Disseldorp <ddiss@suse.de>
+Source: http://www.peach.ne.jp/archives/istgt/
+
+Files: *
+Copyright: (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>
+License: BSD 2-clause
+
+Files: src/md5.*
+Copyright: (c) 1995 - 2001 Kungliga Tekniska Högskolan
+License: BSD 3-clause
+
+Files: src/hash.h
+Copyright: (c) 1999 Kungliga Tekniska Högskolan
+License: BSD 3-clause
