@@ -25,10 +25,11 @@ header   =
 document = 
 sample   = auth.conf istgtcontrol.conf \
 	istgt.large.conf.in istgt.conf.in \
-	istgt.sh.in istgt_netbsd.sh.in istgt_linux.sh.in
+	istgt.sh.in istgt_netbsd.sh.in istgt_linux.sh.in \
+	istgt.service.in
 rctemplate = @rctemplate@
 rcdir    = @rcdir@
-rcfile   = $(rctemplate:.sh.in=.sh)
+rcfile   = $(rctemplate:.in=)
 
 DISTDIR = $(top_srcdir)/`cat $(top_srcdir)/distdir`
 DISTFILES = Makefile.in \
@@ -70,9 +71,12 @@ install: install-dirs
 	$(INSTALL) -m 0600 auth.conf $(DESTDIR)$(sysconfdir)/istgt/auth.conf.sample
 	$(INSTALL) -m 0600 istgtcontrol.conf \
 		$(DESTDIR)$(sysconfdir)/istgt/istgtcontrol.conf.sample
-#	$(INSTALL) -m 0555 istgt.sh $(DESTDIR)$(sysconfdir)/rc.d/istgt
 	if [ "x$(rcfile)" != "x" -a -f "$(rcfile)" ]; then \
-	    $(INSTALL) -m 0555 $(rcfile) $(DESTDIR)$(rcdir)/istgt; \
+	    if  [ "x$(rcfile)" == "xistgt.service" ]; then \
+		$(INSTALL) -m 0644 $(rcfile) $(DESTDIR)$(rcdir)/istgt.service; \
+	    else \
+		$(INSTALL) -m 0555 $(rcfile) $(DESTDIR)$(rcdir)/istgt; \
+	    fi \
 	fi
 
 install-dirs:

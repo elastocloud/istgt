@@ -1,0 +1,14 @@
+[Unit]
+Description=istgt iSCSI Daemon
+After=syslog.target network.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/istgt.pid
+ExecStart=%%BINDIR%%/istgt -c %%SYSCONFDIR%%/istgt.conf
+Restart=on-abort
+ExecReload=%%BINDIR%%/kill -HUP $MAINPID
+LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target
