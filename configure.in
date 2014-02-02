@@ -18,6 +18,13 @@ if test "$CC" = "clang" && test "$ac_test_CFLAGS" != "set"; then
   CFLAGS="-g -O3"
 fi
 
+# systemd unit directory
+AC_ARG_WITH([unitdir],
+	    [AS_HELP_STRING([--with-unitdir=UNITDIR_PATH],
+	    [Generate and install a systemd services file in provided dir])],
+	    [],
+	    [with_unitdir=no])
+
 # host OS related
 vboxinc="/usr/local/src/virtualbox/*/include"
 vboxlib="/usr/local/lib/virtualbox"
@@ -31,8 +38,13 @@ case "$host_os" in
 	    vboxinc=$tmp
 	fi
 	vboxlib="/usr/lib/virtualbox"
-	AC_SUBST([rctemplate], ["istgt_linux.sh.in"])
-	AC_SUBST([rcdir], ['/etc/init.d'])
+	if test "x$with_unitdir" != xno -a -d "$with_unitdir"; then
+		AC_SUBST([rctemplate], ["istgt.service.in"])
+		AC_SUBST([rcdir], [$with_unitdir])
+	else
+		AC_SUBST([rctemplate], ["istgt_linux.sh.in"])
+		AC_SUBST([rcdir], ['/etc/init.d'])
+	fi
 	AC_DEFINE([_GNU_SOURCE], 1, [Define if linux host])
 	;;
 *netbsd*)
