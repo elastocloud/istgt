@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
- * Copyright (C) 2013 David Disseldorp
+ * Copyright (C) 2013-2014 David Disseldorp
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -72,7 +72,7 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 	struct istgt_lu_disk_elasto *exspec
 				= (struct istgt_lu_disk_elasto *)spec->exspec;
 
-	if (flags != O_RDWR) {
+	if (!(flags & O_RDWR)) {
 		ISTGT_ERRLOG("read-only Elasto cloud disk not supported\n");
 		return -1;
 	}
@@ -82,18 +82,19 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 	auth.insecure_http
 		= (spec->eflags & ISTGT_LU_ELASTO_FLAG_HTTP) ? true : false;
 
-	ret = elasto_fcreate(&auth,
-			     spec->file,
-			     spec->size,
-			     &exspec->efh);
+	ret = elasto_fopen(&auth,
+			   spec->file,
+			   ((flags & O_CREAT) ? ELASTO_FOPEN_CREATE : 0),
+			   &exspec->efh);
 	if (ret < 0) {
 		ISTGT_ERRLOG("failed to open Elasto file: %s\n", spec->file);
-		xfree(auth.az.ps_path);
-		return -1;
+		goto err_out;;
 	}
 
+	ret = 0;
+err_out:
 	xfree(auth.az.ps_path);
-	return 0;
+	return ret;
 }
 
 static int
@@ -185,12 +186,18 @@ istgt_lu_disk_sync_elasto(ISTGT_LU_DISK *spec, uint64_t offset __attribute__((__
 }
 
 static int
-istgt_lu_disk_allocate_elasto(ISTGT_LU_DISK *spec __attribute__((__unused__)))
+istgt_lu_disk_allocate_elasto(ISTGT_LU_DISK *spec)
 {
+	int ret;
 	struct istgt_lu_disk_elasto *exspec
 				= (struct istgt_lu_disk_elasto *)spec->exspec;
 
-	/* not implemented */
+	/* unconditionally truncate to the size provided */
+	ret = elasto_ftruncate(exspec->efh, spec->size);
+	if (ret < 0) {
+		ISTGT_ERRLOG("failed to truncate Elasto file\n");
+		return -1;
+	}
 
 	return 0;
 }
@@ -247,10 +254,24 @@ istgt_lu_disk_elasto_lun_init(ISTGT_LU_DISK *spec,
 
 	flags = lu->readonly ? O_RDONLY : O_RDWR;
 	rc = spec->open(spec, flags, 0666);
+	if ((rc == -ENOENT) && !lu->readonly) {
+		ISTGT_LOG("LU%d: LUN%d: no cloud object, creating\n",
+			  spec->num, spec->lun);
+		flags |= (O_CREAT | O_EXCL);
+		rc = spec->open(spec, flags, 0666);
+	}
 	if (rc < 0) {
 		ISTGT_ERRLOG("LU%d: LUN%d: open error(rc=%d)\n",
-		    spec->num, spec->lun, rc);
+			     lu->num, spec->lun, rc);
 		return -1;
+	}
+	if (!lu->readonly) {
+		rc = spec->allocate(spec);
+		if (rc < 0) {
+			ISTGT_ERRLOG("LU%d: LUN%d: allocate error\n",
+			    lu->num, spec->lun);
+			return -1;
+		}
 	}
 
 	printf("LU%d: LUN%d cloud_path=%s, size=%"PRIu64"\n",
