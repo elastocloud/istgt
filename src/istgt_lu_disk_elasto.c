@@ -62,19 +62,51 @@ struct istgt_lu_disk_elasto {
 	struct elasto_fh *efh;
 };
 
+static uint32_t
+elasto_posix_flags_map(uint32_t posix_flags, uint32_t *_elasto_flags)
+{
+	uint32_t elasto_flags = 0;
+
+	ISTGT_LOG("Mapping POSIX flags 0x%x to Elasto flags\n", posix_flags);
+	if (posix_flags & O_RDWR) {
+		posix_flags &= ~O_RDWR;
+	} else {
+		ISTGT_ERRLOG("read-only Elasto cloud disk not supported\n");
+		return -1;
+	}
+	if (posix_flags & O_CREAT) {
+		elasto_flags |= ELASTO_FOPEN_CREATE;
+		posix_flags &= ~O_CREAT;
+	}
+	if (posix_flags & O_EXCL) {
+		elasto_flags |= ELASTO_FOPEN_EXCL;
+		posix_flags &= ~O_EXCL;
+	}
+	if (posix_flags != 0) {
+		ISTGT_ERRLOG("Unsupported Elasto cloud disk flags: 0x%x\n",
+			     posix_flags);
+		return -1;
+	}
+
+	ISTGT_LOG("Mapped POSIX flags to Elasto flags 0x%x\n", elasto_flags);
+	*_elasto_flags = elasto_flags;
+	return 0;
+}
+
 static int
 istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
-			int flags,
-			int mode __attribute__((__unused__)))
+			  int flags,
+			  int mode __attribute__((__unused__)))
 {
 	struct elasto_fauth auth;
+	uint32_t elasto_flags;
 	int ret;
 	struct istgt_lu_disk_elasto *exspec
 				= (struct istgt_lu_disk_elasto *)spec->exspec;
 
-	if (!(flags & O_RDWR)) {
-		ISTGT_ERRLOG("read-only Elasto cloud disk not supported\n");
-		return -1;
+	ret = elasto_posix_flags_map(flags, &elasto_flags);
+	if (ret < 0) {
+		goto err_out;
 	}
 
 	auth.type = ELASTO_FILE_AZURE;
@@ -84,16 +116,17 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 
 	ret = elasto_fopen(&auth,
 			   spec->file,
-			   ((flags & O_CREAT) ? ELASTO_FOPEN_CREATE : 0),
+			   elasto_flags,
 			   &exspec->efh);
 	if (ret < 0) {
 		ISTGT_ERRLOG("failed to open Elasto file: %s\n", spec->file);
-		goto err_out;;
+		goto err_path_free;;
 	}
 
 	ret = 0;
-err_out:
+err_path_free:
 	xfree(auth.az.ps_path);
+err_out:
 	return ret;
 }
 
