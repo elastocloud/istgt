@@ -285,14 +285,8 @@ istgt_lu_disk_elasto_lun_init(ISTGT_LU_DISK *spec,
 		return -1;
 	}
 
-	flags = lu->readonly ? O_RDONLY : O_RDWR;
+	flags = lu->readonly ? O_RDONLY : (O_CREAT | O_RDWR);
 	rc = spec->open(spec, flags, 0666);
-	if ((rc == -ENOENT) && !lu->readonly) {
-		ISTGT_LOG("LU%d: LUN%d: no cloud object, creating\n",
-			  spec->num, spec->lun);
-		flags |= (O_CREAT | O_EXCL);
-		rc = spec->open(spec, flags, 0666);
-	}
 	if (rc < 0) {
 		ISTGT_ERRLOG("LU%d: LUN%d: open error(rc=%d)\n",
 			     lu->num, spec->lun, rc);
