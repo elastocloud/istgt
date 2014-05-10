@@ -285,6 +285,10 @@ istgt_lu_disk_elasto_lun_init(ISTGT_LU_DISK *spec,
 		return -1;
 	}
 
+	if (g_trace_flag & ISTGT_TRACE_DEBUG) {
+		elasto_fdebug(10);
+	}
+
 	flags = lu->readonly ? O_RDONLY : (O_CREAT | O_RDWR);
 	rc = spec->open(spec, flags, 0666);
 	if (rc < 0) {
