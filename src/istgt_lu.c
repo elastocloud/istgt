@@ -941,6 +941,8 @@ istgt_lu_parse_elasto_flags(const char *flags)
 			elasto_flags |= ISTGT_LU_ELASTO_FLAG_HTTP;
 		} else if (strcasecmp(p, "https") == 0) {
 			elasto_flags &= ~ISTGT_LU_ELASTO_FLAG_HTTP;
+		} else if (strcasecmp(p, "lease_break") == 0) {
+			elasto_flags |= ISTGT_LU_ELASTO_FLAG_LEASE_BREAK;
 		} else {
 			ISTGT_ERRLOG("ignoring unknown elasto flag %.64s\n", p);
 		}

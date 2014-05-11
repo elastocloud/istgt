@@ -99,6 +99,7 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 			  int mode __attribute__((__unused__)))
 {
 	struct elasto_fauth auth;
+	struct elasto_fstat efstat;
 	uint32_t elasto_flags;
 	int ret;
 	struct istgt_lu_disk_elasto *exspec
@@ -118,14 +119,38 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 			   spec->file,
 			   elasto_flags,
 			   &exspec->efh);
+	xfree(auth.az.ps_path);
 	if (ret < 0) {
 		ISTGT_ERRLOG("failed to open Elasto file: %s\n", spec->file);
-		goto err_path_free;;
+		goto err_out;
 	}
 
-	ret = 0;
-err_path_free:
-	xfree(auth.az.ps_path);
+	ret = elasto_fstat(exspec->efh, &efstat);
+	if (ret < 0) {
+		ISTGT_ERRLOG("failed to stat Elasto file: %s\n",
+			     spec->file);
+		goto err_efh_close;
+	}
+
+	if (efstat.size != spec->size) {
+		ISTGT_LOG("existing size: %" PRIu64 ", spec size: %" PRIu64
+			  "\n", efstat.size, spec->size);
+	}
+
+	if ((spec->eflags & ISTGT_LU_ELASTO_FLAG_LEASE_BREAK)
+	 && (efstat.lease_status == ELASTO_FLEASE_LOCKED)) {
+		ISTGT_LOG("breaking lease on Elasto file: %s\n", spec->file);
+		ret = elasto_flease_break(exspec->efh);
+		if (ret < 0) {
+			ISTGT_ERRLOG("failed to break Elasto lease: %s\n",
+				     spec->file);
+			goto err_efh_close;
+		}
+	}
+
+	return 0;
+err_efh_close:
+	elasto_fclose(exspec->efh);
 err_out:
 	return ret;
 }
