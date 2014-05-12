@@ -23,7 +23,7 @@ name="istgt"
 
 required_files="${istgt_config}"
 pidfile="${istgt_pidfile}"
-command="%%SBINDIR%%/istgt"
+command="%%BINDIR%%/istgt"
 command_args="-c ${istgt_config} ${istgt_flags}"
 
 case "$1" in
