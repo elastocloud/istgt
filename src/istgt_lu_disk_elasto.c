@@ -132,7 +132,10 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 		goto err_efh_close;
 	}
 
-	if (efstat.size != spec->size) {
+	if (spec->eflags & ISTGT_LU_ELASTO_FLAG_SIZE_AUTO) {
+		ISTGT_LOG("using existing size: %" PRIu64 "\n", efstat.size);
+		spec->size = efstat.size;
+	} else if (efstat.size != spec->size) {
 		ISTGT_LOG("existing size: %" PRIu64 ", spec size: %" PRIu64
 			  "\n", efstat.size, spec->size);
 	}
@@ -302,6 +305,19 @@ istgt_lu_disk_elasto_lun_init(ISTGT_LU_DISK *spec,
 	memset(exspec, 0, sizeof(*exspec));
 	spec->exspec = exspec;
 
+	if (g_trace_flag & ISTGT_TRACE_DEBUG) {
+		elasto_fdebug(10);
+	}
+
+	flags = lu->readonly ? O_RDONLY : (O_CREAT | O_RDWR);
+	/* open fills spec->size if "Auto" was specified */
+	rc = spec->open(spec, flags, 0666);
+	if (rc < 0) {
+		ISTGT_ERRLOG("LU%d: LUN%d: open error(rc=%d)\n",
+			     lu->num, spec->lun, rc);
+		return -1;
+	}
+
 	/* file, size and ps_file already filled by config */
 	spec->blocklen = 512;
 	spec->blockcnt = spec->size / spec->blocklen;
@@ -310,17 +326,6 @@ istgt_lu_disk_elasto_lun_init(ISTGT_LU_DISK *spec,
 		return -1;
 	}
 
-	if (g_trace_flag & ISTGT_TRACE_DEBUG) {
-		elasto_fdebug(10);
-	}
-
-	flags = lu->readonly ? O_RDONLY : (O_CREAT | O_RDWR);
-	rc = spec->open(spec, flags, 0666);
-	if (rc < 0) {
-		ISTGT_ERRLOG("LU%d: LUN%d: open error(rc=%d)\n",
-			     lu->num, spec->lun, rc);
-		return -1;
-	}
 	if (!lu->readonly) {
 		rc = spec->allocate(spec);
 		if (rc < 0) {

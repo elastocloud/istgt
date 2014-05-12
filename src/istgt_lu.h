@@ -153,6 +153,7 @@ typedef struct istgt_lu_slot_t {
 typedef enum {
 	ISTGT_LU_ELASTO_FLAG_HTTP = 0x00000001,
 	ISTGT_LU_ELASTO_FLAG_LEASE_BREAK = 0x00000002,
+	ISTGT_LU_ELASTO_FLAG_SIZE_AUTO = 0x00000004,
 } ISTGT_LU_ELASTO_FLAG;
 
 typedef struct istgt_lu_elasto_t {

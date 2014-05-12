@@ -1881,10 +1881,20 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 					goto error_return;
 				}
 				lu->lun[i].u.elasto.ps_file = xstrdup(file);
+
+				flags = istgt_get_nmval(sp, buf, j, 4);
+				if (flags == NULL) {
+					ISTGT_ERRLOG("LU%d: LUN%d: format error, no flags\n", lu->num, i);
+					goto error_return;
+				}
+
+				lu->lun[i].u.elasto.flags = istgt_lu_parse_elasto_flags(flags);
+
 				if (strcasecmp(size, "Auto") == 0
 				    || strcasecmp(size, "Size") == 0) {
-					/* not supported yet */
-					lu->lun[i].u.elasto.size = 0;
+					lu->lun[i].u.elasto.flags |= ISTGT_LU_ELASTO_FLAG_SIZE_AUTO;
+					/* placeholder until discovered on open */
+					lu->lun[i].u.elasto.size = ~0;
 				} else {
 					lu->lun[i].u.elasto.size = istgt_lu_parse_size(size);
 				}
@@ -1892,12 +1902,7 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 					ISTGT_ERRLOG("LU%d: LUN%d: invalid size (%s)\n", lu->num, i, size);
 					goto error_return;
 				}
-				flags = istgt_get_nmval(sp, buf, j, 4);
-				if (flags == NULL) {
-					ISTGT_ERRLOG("LU%d: LUN%d: format error, no flags\n", lu->num, i);
-					goto error_return;
-				}
-				lu->lun[i].u.elasto.flags = istgt_lu_parse_elasto_flags(flags);
+
 				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 				    "Cloud ps_file=%s, cloud_path=%s, size=%"PRIu64"\n",
 				    lu->lun[i].u.elasto.ps_file,
