@@ -1,0 +1,24 @@
+# Minimal istgt configuration file with a single cloud-backed logical unit
+# This configuration is INSECURE - any unauthenticated initiator can connect
+[Global]
+  NodeBase "iqn.2012-06.org.elastocloud"
+  DiscoveryAuthMethod None
+
+[PortalGroup1]
+  # listen on high port number, to allow execution as non-root
+  Portal DA1 [::]:515500
+
+[InitiatorGroup1]
+  InitiatorName "ALL"
+
+[UnitControl]
+  Comment "Internal Logical Unit Controller disabled"
+
+[LogicalUnit1]
+  TargetName disk1
+  TargetAlias "Data Disk1"
+  Mapping PortalGroup1 InitiatorGroup1
+  AuthMethod None
+  UnitType Disk
+  # XXX replace paths below
+  LUN0 cloud /<account>/<container/<blob> <azure_publish_settings_path> 4GB https
