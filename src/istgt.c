@@ -2457,7 +2457,11 @@ reload:
 				rc = accept(fds[i].fd, (struct sockaddr *) &sa, &salen);
 #endif /* ISTGT_USE_KQUEUE */
 				if (rc < 0) {
-					ISTGT_ERRLOG("accept error: %d\n", rc);
+					if (errno == ECONNABORTED || errno == ECONNRESET) {
+						continue;
+					}
+					ISTGT_ERRLOG("accept error: %d(errno=%d)\n",
+					    rc, errno);
 					continue;
 				}
 				sock = rc;

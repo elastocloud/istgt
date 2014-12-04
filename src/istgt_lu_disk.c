@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -529,8 +529,11 @@ istgt_lu_disk_init(ISTGT_Ptr istgt __attribute__((__unused__)), ISTGT_LU_Ptr lu)
 		spec->wait_lu_task = NULL;
 
 		spec->npr_keys = 0;
+		/* spec is cleared, only pointer is handled */
 		for (j = 0; j < MAX_LU_RESERVE; j++) {
 			spec->pr_keys[j].registered_initiator_port = NULL;
+			spec->pr_keys[j].registered_target_port = NULL;
+			spec->pr_keys[j].initiator_ports = NULL;
 		}
 		spec->pr_generation = 0;
 		spec->rsv_port = NULL;
@@ -2717,15 +2720,21 @@ istgt_lu_disk_remove_other_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute
 	int i, j;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-	    "remove other prkey=0x%16.16"PRIx64", port=%s\n",
-	    key, ((initiator_port != NULL) ? initiator_port : "N/A"));
+	    "remove prkey=0x%16.16"PRIx64", iniport=%s, tgtport=%s\n",
+	    key, ((initiator_port != NULL) ? initiator_port : "N/A"),
+	    ((target_port != NULL) ? target_port : "N/A"));
 
-	for (i = 0; i < spec->npr_keys; i++) {
+	if (spec->npr_keys == 0)
+		return 0;
+
+	/* remove specified prkey from end of array */
+	for (i = spec->npr_keys - 1; i >= 0; i--) {
 		prkey = &spec->pr_keys[i];
 		if (prkey == NULL)
 			continue;
 		if (key == 0 || prkey->key == key)
 			continue;
+		/* NULL means all initiator/target */
 		if (initiator_port == NULL ||
 		    strcasecmp(prkey->registered_initiator_port,
 			initiator_port) == 0)
@@ -2736,30 +2745,36 @@ istgt_lu_disk_remove_other_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute
 			target_port) == 0)
 			continue;
 
+		/* this prkey will remove */
 		istgt_lu_disk_free_pr_key(prkey);
+		/* move used array */
 		for (j = i; j < spec->npr_keys - 1; j++) {
 			prkey1 = &spec->pr_keys[j];
 			prkey2 = &spec->pr_keys[j+1];
-
-			prkey1->registered_initiator_port
-				= prkey2->registered_initiator_port;
-			prkey2->registered_initiator_port = NULL;
-			prkey1->registered_target_port
-				= prkey2->registered_target_port;
-			prkey2->registered_target_port = NULL;
-			prkey1->pg_idx = prkey2->pg_idx;
-			prkey2->pg_idx = 0;
-			prkey1->pg_tag = prkey2->pg_tag;
-			prkey2->pg_tag = 0;
-			prkey1->ninitiator_ports = prkey2->ninitiator_ports;
-			prkey2->ninitiator_ports = 0;
-			prkey1->initiator_ports = prkey2->initiator_ports;
-			prkey2->initiator_ports = NULL;
-			prkey1->all_tpg = prkey2->all_tpg;
-			prkey2->all_tpg = 0;
+			*prkey1 = *prkey2;
 		}
+		/* last array is cleared */
+		prkey1 = &spec->pr_keys[j];
+		memset(prkey1, 0, sizeof(*prkey1));
+		prkey1->registered_initiator_port = NULL;
+		prkey1->registered_target_port = NULL;
+		prkey1->initiator_ports = NULL;
+		/* update counts */
 		spec->npr_keys--;
 	}
+#ifdef ISTGT_TRACE_DISK
+	if (g_trace_flag) {
+		for (i = 0; i < spec->npr_keys; i++) {
+			prkey = &spec->pr_keys[i];
+			if (prkey == NULL)
+				continue;
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+			    "keylist: prkey=0x%16.16"PRIx64", iniport=%s, tgtport=%s\n",
+			    prkey->key, prkey->registered_initiator_port,
+			    prkey->registered_target_port);
+		}
+	}
+#endif /* ISTGT_TRACE_DISK */
 	return 0;
 }
 
@@ -2770,15 +2785,21 @@ istgt_lu_disk_remove_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__
 	int i, j;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-	    "remove prkey=0x%16.16"PRIx64", port=%s\n",
-	    key, ((initiator_port != NULL) ? initiator_port : "N/A"));
+	    "remove prkey=0x%16.16"PRIx64", iniport=%s, tgtport=%s\n",
+	    key, ((initiator_port != NULL) ? initiator_port : "N/A"),
+	    ((target_port != NULL) ? target_port : "N/A"));
 
-	for (i = 0; i < spec->npr_keys; i++) {
+	if (spec->npr_keys == 0)
+		return 0;
+
+	/* remove specified prkey from end of array */
+	for (i = spec->npr_keys - 1; i >= 0; i--) {
 		prkey = &spec->pr_keys[i];
 		if (prkey == NULL)
 			continue;
 		if (key != 0 && prkey->key != key)
 			continue;
+		/* NULL means all initiator/target */
 		if (initiator_port != NULL
 		    && strcasecmp(prkey->registered_initiator_port,
 			initiator_port) != 0)
@@ -2789,30 +2810,36 @@ istgt_lu_disk_remove_pr_key(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__
 			target_port) != 0)
 			continue;
 
+		/* this prkey will remove */
 		istgt_lu_disk_free_pr_key(prkey);
+		/* move used array */
 		for (j = i; j < spec->npr_keys - 1; j++) {
 			prkey1 = &spec->pr_keys[j];
 			prkey2 = &spec->pr_keys[j+1];
-
-			prkey1->registered_initiator_port
-				= prkey2->registered_initiator_port;
-			prkey2->registered_initiator_port = NULL;
-			prkey1->registered_target_port
-				= prkey2->registered_target_port;
-			prkey2->registered_target_port = NULL;
-			prkey1->pg_idx = prkey2->pg_idx;
-			prkey2->pg_idx = 0;
-			prkey1->pg_tag = prkey2->pg_tag;
-			prkey2->pg_tag = 0;
-			prkey1->ninitiator_ports = prkey2->ninitiator_ports;
-			prkey2->ninitiator_ports = 0;
-			prkey1->initiator_ports = prkey2->initiator_ports;
-			prkey2->initiator_ports = NULL;
-			prkey1->all_tpg = prkey2->all_tpg;
-			prkey2->all_tpg = 0;
+			*prkey1 = *prkey2;
 		}
+		/* last array is cleared */
+		prkey1 = &spec->pr_keys[j];
+		memset(prkey1, 0, sizeof(*prkey1));
+		prkey1->registered_initiator_port = NULL;
+		prkey1->registered_target_port = NULL;
+		prkey1->initiator_ports = NULL;
+		/* update counts */
 		spec->npr_keys--;
 	}
+#ifdef ISTGT_TRACE_DISK
+	if (g_trace_flag) {
+		for (i = 0; i < spec->npr_keys; i++) {
+			prkey = &spec->pr_keys[i];
+			if (prkey == NULL)
+				continue;
+			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+			    "keylist: prkey=0x%16.16"PRIx64", iniport=%s, tgtport=%s\n",
+			    prkey->key, prkey->registered_initiator_port,
+			    prkey->registered_target_port);
+		}
+	}
+#endif /* ISTGT_TRACE_DISK */
 	return 0;
 }
 
@@ -3145,9 +3172,12 @@ istgt_lu_disk_scsi_persistent_reserve_out(ISTGT_LU_DISK *spec, CONN_Ptr conn, IS
 				lu_cmd->status = ISTGT_SCSI_STATUS_RESERVATION_CONFLICT;
 				return -1;
 			}
+#if 0
+			/* registrants can change the prkey */
 			if (g_trace_flag) {
 				ISTGT_WARNLOG("LU%d: duplicate reserve\n", spec->lu->num);
 			}
+#endif
 			lu_cmd->status = ISTGT_SCSI_STATUS_GOOD;
 			return 0;
 		}
@@ -3705,6 +3735,9 @@ istgt_lu_disk_scsi_persistent_reserve_out(ISTGT_LU_DISK *spec, CONN_Ptr conn, IS
 
 		/* register new key */
 		prkey->key = sarkey;
+		/* replace existing reservation */
+		if (rkey != 0 && spec->rsv_key == rkey)
+			spec->rsv_key = sarkey;
 
 		/* command received port */
 		prkey->registered_initiator_port = xstrdup(conn->initiator_port);
@@ -3713,6 +3746,11 @@ istgt_lu_disk_scsi_persistent_reserve_out(ISTGT_LU_DISK *spec, CONN_Ptr conn, IS
 		strlwr(prkey->registered_target_port);
 		prkey->pg_idx = conn->portal.idx;
 		prkey->pg_tag = conn->portal.tag;
+
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+		    "Register Key:0x%16.16"PRIx64", InitiatorPort: %s, TargetPort: %s\n",
+		    prkey->key, prkey->registered_initiator_port,
+		    prkey->registered_target_port);
 
 		/* specified ports */
 		prkey->ninitiator_ports = nports;
@@ -4375,12 +4413,12 @@ istgt_lu_disk_lbsync(ISTGT_LU_DISK *spec, CONN_Ptr conn __attribute__((__unused_
 	uint64_t nbytes;
 	int64_t rc;
 
-	if (len == 0) {
-		return 0;
-	}
-
 	maxlba = spec->blockcnt;
-	llen = (uint64_t) len;
+	if (len == 0 && lba < maxlba) {
+		llen = maxlba - lba;
+	} else {
+		llen = (uint64_t) len;
+	}
 	blen = spec->blocklen;
 	offset = lba * blen;
 	nbytes = llen * blen;
@@ -4913,7 +4951,7 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	lun_i = istgt_lu_islun2lun(lu_cmd->lun);
 	if (lun_i >= lu->maxlun) {
 #ifdef ISTGT_TRACE_DISK
-		ISTGT_ERRLOG("LU%d: LUN%4.4"PRIx64" invalid\n",
+		ISTGT_ERRLOG("LU%d: LUN%d invalid\n",
 		    lu->num, lun_i);
 #endif /* ISTGT_TRACE_DISK */
 		if (cdb[0] == SPC_INQUIRY) {
@@ -5290,7 +5328,7 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 						ISTGT_ERRLOG("timeout trans_cond CmdSN=%u "
 						    "(time=%d)\n",
 						    lu_task->lu_cmd.CmdSN,
-						    (int)difftime(now, start));
+						    istgt_difftime(now, start));
 						/* timeout */
 						return -1;
 					}
@@ -5327,7 +5365,7 @@ istgt_lu_disk_queue_start(ISTGT_LU_Ptr lu, int lun)
 					lu_task->error = 1;
 					now = time(NULL);
 					ISTGT_ERRLOG("timeout trans_cond CmdSN=%u (time=%d)\n",
-					    lu_task->lu_cmd.CmdSN, (int)difftime(now, start));
+					    lu_task->lu_cmd.CmdSN, istgt_difftime(now, start));
 					return -1;
 				}
 				lu_task->error = 1;
@@ -5492,7 +5530,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	lun_i = istgt_lu_islun2lun(lu_cmd->lun);
 	if (lun_i >= lu->maxlun) {
 #ifdef ISTGT_TRACE_DISK
-		ISTGT_ERRLOG("LU%d: LUN%4.4"PRIx64" invalid\n",
+		ISTGT_ERRLOG("LU%d: LUN%d invalid\n",
 		    lu->num, lun_i);
 #endif /* ISTGT_TRACE_DISK */
 		if (cdb[0] == SPC_INQUIRY) {
@@ -6608,7 +6646,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				len = spec->blockcnt;
 			}
 			ISTGT_TRACELOG(ISTGT_TRACE_SCSI,
-			    "SYNCHRONIZE_CACHE_10(lba %"PRIu64
+			    "SYNCHRONIZE_CACHE_16(lba %"PRIu64
 			    ", len %u blocks)\n",
 			    lba, len);
 			rc = istgt_lu_disk_lbsync(spec, conn, lu_cmd, lba, len);

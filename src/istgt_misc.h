@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <time.h>
 
 #define ISTGT_USE_MACRO_EXPAND
 
@@ -186,6 +187,7 @@ int istgt_bin2hex(char *buf, size_t len, const uint8_t *data, size_t data_len);
 int istgt_hex2bin(uint8_t *data, size_t data_len, const char *str);
 
 /* other functions */
+int istgt_difftime(time_t a, time_t b);
 void istgt_dump(const char *label, const uint8_t *buf, size_t len);
 void istgt_fdump(FILE *fp, const char *label, const uint8_t *buf, size_t len);
 void istgt_yield(void);

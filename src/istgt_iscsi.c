@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -671,15 +671,15 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		now = time(NULL);
 		if (errno == ECONNRESET) {
 			ISTGT_WARNLOG("Connection reset by peer (%s,time=%d)\n",
-			    conn->initiator_name, (int)difftime(now, start));
+			    conn->initiator_name, istgt_difftime(now, start));
 			conn->state = CONN_STATE_EXITING;
 		} else if (errno == ETIMEDOUT) {
 			ISTGT_WARNLOG("Operation timed out (%s,time=%d)\n",
-			    conn->initiator_name, (int)difftime(now, start));
+			    conn->initiator_name, istgt_difftime(now, start));
 			conn->state = CONN_STATE_EXITING;
 		} else {
 			ISTGT_ERRLOG("iscsi_read() failed (errno=%d,%s,time=%d)\n",
-			    errno, conn->initiator_name, (int)difftime(now, start));
+			    errno, conn->initiator_name, istgt_difftime(now, start));
 		}
 		return -1;
 	}
@@ -763,7 +763,7 @@ istgt_iscsi_read_pdu(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		if (rc < 0) {
 			now = time(NULL);
 			ISTGT_ERRLOG("readv() failed (%d,errno=%d,%s,time=%d)\n",
-			    rc, errno, conn->initiator_name, (int)difftime(now, start));
+			    rc, errno, conn->initiator_name, istgt_difftime(now, start));
 			return -1;
 		}
 		if (rc == 0) {
@@ -1258,7 +1258,7 @@ istgt_iscsi_write_pdu_internal(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 		if (rc < 0) {
 			now = time(NULL);
 			ISTGT_ERRLOG("writev() failed (errno=%d,%s,time=%d)\n",
-			    errno, conn->initiator_name, (int)difftime(now, start));
+			    errno, conn->initiator_name, istgt_difftime(now, start));
 			return -1;
 		}
 		nbytes -= rc;
@@ -3592,7 +3592,7 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 					ISTGT_ERRLOG("MCS: CmdSN(%u) error ExpCmdSN=%u "
 					    "(time=%d)\n",
 					    CmdSN, conn->sess->ExpCmdSN,
-					    (int)difftime(now, start));
+					    istgt_difftime(now, start));
 					SESS_MTX_UNLOCK(conn);
 					return -1;
 				}
@@ -5476,6 +5476,10 @@ worker(void *arg)
 
 	ISTGT_TRACELOG(ISTGT_TRACE_NET, "connect to %s:%s,%d\n",
 	    conn->portal.host, conn->portal.port, conn->portal.tag);
+#if 0
+	ISTGT_NOTICELOG("connect to %s:%s,%d\n",
+	    conn->portal.host, conn->portal.port, conn->portal.tag);
+#endif
 
 #ifdef ISTGT_USE_KQUEUE
 	kq = kqueue();
@@ -5743,6 +5747,15 @@ worker(void *arg)
 				}
 			}
 
+#if 0
+			if (opcode == ISCSI_OP_LOGIN) {
+				//ISTGT_NOTICELOG("OP LOGIN: %s\n", conn->initiator_port);
+				istgt_yield();
+				if (conn->full_feature) {
+					//ISTGT_NOTICELOG("full_feature %s\n", conn->initiator_port);
+				}
+			}
+#endif
 			if (opcode == ISCSI_OP_LOGOUT) {
 				ISTGT_TRACELOG(ISTGT_TRACE_ISCSI, "logout received\n");
 				break;
@@ -6264,6 +6277,15 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 #ifdef HAVE_PTHREAD_SET_NAME_NP
 	snprintf(buf, sizeof buf, "connthread #%d", conn->id);
 	pthread_set_name_np(conn->thread, buf);
+#endif
+
+	/* XXX should use sleep loop? */
+	sleep(1);
+#if 0
+	/* wait the thread is running */
+	while (conn->state == CONN_STATE_INVALID) {
+		istgt_yield();
+	}
 #endif
 
 	return 0;

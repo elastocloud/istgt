@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,7 +33,12 @@
 #include <stdint.h>
 
 #include <stddef.h>
+#ifdef HAVE_LIBMD
+#include <sys/types.h>
+#include <md5.h>
+#else
 #include <openssl/md5.h>
+#endif
 
 #include "istgt.h"
 #include "istgt_md5.h"
@@ -45,7 +50,12 @@ istgt_md5init(ISTGT_MD5CTX *md5ctx)
 
 	if (md5ctx == NULL)
 		return -1;
+#ifdef HAVE_LIBMD
+	MD5Init(&md5ctx->md5ctx);
+	rc = 1;
+#else
 	rc = MD5_Init(&md5ctx->md5ctx);
+#endif
 	return rc;
 }
 
@@ -56,7 +66,12 @@ istgt_md5final(void *md5, ISTGT_MD5CTX *md5ctx)
 
 	if (md5ctx == NULL || md5 == NULL)
 		return -1;
+#ifdef HAVE_LIBMD
+	MD5Final(md5, &md5ctx->md5ctx);
+	rc = 1;
+#else
 	rc = MD5_Final(md5, &md5ctx->md5ctx);
+#endif
 	return rc;
 }
 
@@ -69,6 +84,11 @@ istgt_md5update(ISTGT_MD5CTX *md5ctx, const void *data, size_t len)
 		return -1;
 	if (data == NULL || len <= 0)
 		return 0;
+#ifdef HAVE_LIBMD
+	MD5Update(&md5ctx->md5ctx, data, len);
+	rc = 1;
+#else
 	rc = MD5_Update(&md5ctx->md5ctx, data, len);
+#endif
 	return rc;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,7 +30,12 @@
 
 #include <stddef.h>
 
+#ifdef HAVE_LIBMD
+#include <sys/types.h>
+#include <md5.h>
+#else
 #include <openssl/md5.h>
+#endif
 
 #define ISTGT_MD5DIGEST_LEN MD5_DIGEST_LENGTH
 

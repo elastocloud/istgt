@@ -1,4 +1,4 @@
-The iSCSI target for Debian/NetBSD/FreeBSD
+The iSCSI target for openSUSE/Debian/NetBSD/FreeBSD
 
 This software (istgt) is the implementation of iSCSI target
 (refer to RFC3720 about iSCSI) for FreeBSD 7.1 or later.
@@ -68,6 +68,7 @@ External Libs:
  o VirtualBox 4.x DSO (if use --with-vbox configure option)
 
 Tested Initiators:
+ o Microsoft Windows Server 2012 R2 (builtin)
  o Microsoft Windows Server 2008 (builtin)
  o Microsoft Windows Server 2008 R2 (builtin)
  o Microsoft Windows 7 Ultimate x64 (builtin)
@@ -92,6 +93,7 @@ Tested Initiators:
  o FreeBSD 7.3 + iscsi 2.2.4
  o FreeBSD 8.2 + isboot 0.2.3
  o FreeBSD 9.1 + isboot 0.2.6
+ o FreeBSD 9.3 + isboot 0.2.8
  o CentOS 5.2 + Open-iSCSI (package)
  o Ubuntu 9.10 + Open-iSCSI (package)
  o gPXE 1.0.0 + VirtualBox 3.1.2 on FreeNAS 0.7.1
@@ -100,6 +102,7 @@ Tested Initiators:
  o FreeNAS 0.7.2 (FreeBSD 7.3 + iscsi 2.2.4)
  o FreeNAS 0.7.5 (FreeBSD 9.0 + iscsi 2.3.1.0)
  o NAS4Free 9.1.0.1 (FreeBSD 9.1 + iscsi 2.3.1.0)
+ o NAS4Free 9.3.0.1 (FreeBSD 9.3 + iscsi 2.3.1.0)
 
 Features:
  o MCS/MPIO for failover (up to 255 concurrent sessions)

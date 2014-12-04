@@ -173,7 +173,7 @@ istgt_listen(const char *ip, int port)
 			continue;
 		}
 		/* bind OK */
-		rc = listen(sock, 2);
+		rc = listen(sock, 1);
 		if (rc != 0) {
 			close(sock);
 			sock = -1;

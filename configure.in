@@ -39,7 +39,7 @@ case "$host_os" in
 	AC_SUBST([rctemplate], ["istgt_netbsd.sh.in"])
 	AC_SUBST([rcdir], ['/etc/rc.d'])
 	;;
-*freebsd*)
+*dragonfly*|*freebsd*)
 	tmp="/usr/ports/emulators/virtualbox-ose/work/*/include"
 	if test -d "`echo $tmp`"; then
 	    vboxinc=$tmp
@@ -60,7 +60,8 @@ esac
 
 # Checks for libraries.
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([crypto], [MD5_Update])
+AC_CHECK_LIB([md], [MD5Update], ,
+  [AC_CHECK_LIB([crypto], [MD5_Update])])
 AC_CHECK_LIB([cam], [cam_open_spec_device])
 
 # Checks for header files.
@@ -141,6 +142,15 @@ AC_ARG_WITH([rcdir],
         ;;
   esac])
 AC_SUBST([rcdir])
+
+# test for -fstack-protector
+saved_CFLAGS="$CFLAGS"
+AC_MSG_CHECKING([whether the C compiler accepts -fstack-protector])
+CFLAGS="$CFLAGS -fstack-protector"
+AC_TRY_COMPILE(,,
+  AC_MSG_RESULT(yes); saved_CFLAGS="$CFLAGS",
+  AC_MSG_RESULT(no))
+CFLAGS="$saved_CFLAGS"
 
 # test for -Wall
 saved_CFLAGS="$CFLAGS"

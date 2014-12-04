@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 
 #include <unistd.h>
 
@@ -433,6 +434,15 @@ istgt_dset64(uint8_t *data, uint64_t value)
 	data[5] = (value >> 16) & 0xffULL;
 	data[6] = (value >> 8)  & 0xffULL;
 	data[7] = (value >> 0)  & 0xffULL;
+}
+
+int
+istgt_difftime(time_t a, time_t b)
+{
+	double d;
+	/* don't want floating-point format */
+	d = difftime(a, b);
+	return (int)d;
 }
 
 void
