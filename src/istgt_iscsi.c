@@ -3738,8 +3738,7 @@ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	o_bit = u_bit = O_bit = U_bit = 0;
 	bidi_residual_len = residual_len = 0;
 	data_len = lu_cmd.data_len;
-	if (transfer_len != 0
-		&& lu_cmd.status == ISTGT_SCSI_STATUS_GOOD) {
+	if (lu_cmd.status == ISTGT_SCSI_STATUS_GOOD) {
 		if (data_len < transfer_len) {
 			/* underflow */
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Underflow %zu/%u\n",
@@ -3862,8 +3861,7 @@ istgt_iscsi_task_response(CONN_Ptr conn, ISTGT_LU_TASK_Ptr lu_task)
 	o_bit = u_bit = O_bit = U_bit = 0;
 	bidi_residual_len = residual_len = 0;
 	data_len = lu_cmd->data_len;
-	if (transfer_len != 0
-	    && lu_cmd->status == ISTGT_SCSI_STATUS_GOOD) {
+	if (lu_cmd->status == ISTGT_SCSI_STATUS_GOOD) {
 		if (data_len < transfer_len) {
 			/* underflow */
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "Underflow %zu/%u\n",
