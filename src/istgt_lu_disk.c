@@ -6130,7 +6130,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if (lu_cmd->R_bit == 0) {
 				ISTGT_ERRLOG("R_bit == 0\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-				return -1;
+				break;
 			}
 
 			lba = (uint64_t) (DGET24(&cdb[1]) & 0x001fffffU);
@@ -6175,7 +6175,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if ((lu_cmd->R_bit == 0) && (transfer_len > 0)) {
 				ISTGT_ERRLOG("R_bit == 0\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-				return -1;
+				break;
 			}
 
 			rc = istgt_lu_disk_lbread(spec, conn, lu_cmd, lba, transfer_len);
@@ -6212,7 +6212,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if ((lu_cmd->R_bit == 0) && (transfer_len > 0)) {
 				ISTGT_ERRLOG("R_bit == 0\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-				return -1;
+				break;
 			}
 
 			rc = istgt_lu_disk_lbread(spec, conn, lu_cmd, lba, transfer_len);
@@ -6249,7 +6249,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			if ((lu_cmd->R_bit == 0) && (transfer_len > 0)) {
 				ISTGT_ERRLOG("R_bit == 0\n");
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-				return -1;
+				break;
 			}
 
 			rc = istgt_lu_disk_lbread(spec, conn, lu_cmd, lba, transfer_len);
