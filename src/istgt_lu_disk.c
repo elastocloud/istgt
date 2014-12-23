@@ -5587,7 +5587,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 				    data_alloc_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-				return -1;
+				return 0;
 			}
 			memset(data, 0, allocation_len);
 			/* PERIPHERAL QUALIFIER(7-5) PERIPHERAL DEVICE TYPE(4-0) */
@@ -5672,14 +5672,14 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 		if (lu_cmd->R_bit == 0) {
 			ISTGT_ERRLOG("R_bit == 0\n");
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-			return -1;
+			break;
 		}
 		allocation_len = DGET16(&cdb[3]);
 		if (allocation_len > (size_t) data_alloc_len) {
 			ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
 			    data_alloc_len);
 			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
-			return -1;
+			break;
 		}
 		memset(data, 0, allocation_len);
 		data_len = istgt_lu_disk_scsi_inquiry(spec, conn, cdb,
