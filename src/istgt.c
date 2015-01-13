@@ -2424,7 +2424,6 @@ istgt_ev_sig_pipe_read(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
-
 static void
 istgt_ev_sig_handle(evutil_socket_t signum, short events, void *arg)
 {
@@ -2546,8 +2545,8 @@ reload:
 		}
 		nidx++;
 
-		ev[nidx] = event_new(ev_base, SIGTERM, EV_SIGNAL, ev_sig_handle,
-				     istgt);
+		ev[nidx] = event_new(ev_base, SIGTERM, EV_SIGNAL,
+				     istgt_ev_sig_handle, istgt);
 		if (ev[nidx] == NULL) {
 			ISTGT_ERRLOG("failed to spawn event\n");
 			istgt_ev_array_free(ev, nidx);
