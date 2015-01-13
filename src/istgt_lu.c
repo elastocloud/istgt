@@ -2018,6 +2018,7 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 	xfree(lu->inq_vendor);
 	xfree(lu->inq_product);
 	xfree(lu->inq_revision);
+	xfree(lu->inq_serial);
 	for (i = 0; i < MAX_LU_LUN; i++) {
 		switch (lu->lun[i].type) {
 		case ISTGT_LU_LUN_TYPE_DEVICE:
