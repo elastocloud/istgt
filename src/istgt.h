@@ -249,6 +249,8 @@ typedef struct istgt_t {
 	int nlogical_unit;
 	struct istgt_lu_t *logical_unit[MAX_LOGICAL_UNIT];
 
+	struct event_base *ev_base;
+
 	int timeout;
 	int nopininterval;
 	int maxr2t;

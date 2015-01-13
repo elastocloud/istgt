@@ -61,11 +61,10 @@
 #include "istgt_lu.h"
 #include "istgt_proto.h"
 
-#ifdef ISTGT_USE_KQUEUE
-#include <sys/types.h>
-#include <sys/event.h>
-#include <sys/time.h>
-#endif
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+#include <event2/util.h>
+#include <event2/event.h>
 
 #if !defined(__GNUC__)
 #undef __attribute__
@@ -2257,23 +2256,221 @@ istgt_pg_update(ISTGT_Ptr istgt)
 	return 0;
 }
 
+static void
+istgt_ev_pg_read(evutil_socket_t fd, short events, void *arg)
+{
+	ISTGT_Ptr istgt = (ISTGT_Ptr)arg;
+	PORTAL_Ptr pp;
+	int sock;
+	struct sockaddr_storage sa;
+	socklen_t salen;
+	int rc;
+
+	if ((events | EV_READ) == 0) {
+		ISTGT_ERRLOG("invalid portal group callback\n");
+		return;
+	}
+
+	memset(&sa, 0, sizeof(sa));
+	salen = sizeof(sa);
+
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "accept %d\n", fd);
+	pp = istgt_get_sock_portal(istgt, fd);
+	if (pp == NULL) {
+		ISTGT_ERRLOG("failed to lookup portal for socket %d\n", fd);
+		return;
+	}
+
+	rc = accept(fd, (struct sockaddr *)&sa, &salen);
+	if (rc < 0) {
+		if (errno == ECONNABORTED || errno == ECONNRESET) {
+			/* continue waiting for events */
+			return;
+		}
+		ISTGT_ERRLOG("accept error: %d(errno=%d)\n", rc, errno);
+		return;
+	}
+	sock = rc;
+#if 0
+	rc = fcntl(sock, F_GETFL, 0);
+	if (rc == -1) {
+		ISTGT_ERRLOG("fcntl() failed\n");
+		continue;
+	}
+	rc = fcntl(sock, F_SETFL, (rc | O_NONBLOCK));
+	if (rc == -1) {
+		ISTGT_ERRLOG("fcntl() failed\n");
+		continue;
+	}
+#endif
+	rc = istgt_create_conn(istgt, pp, sock, (struct sockaddr *)&sa, salen);
+	if (rc < 0) {
+		close(sock);
+		ISTGT_ERRLOG("istgt_create_conn() failed\n");
+		return;
+	}
+}
+
+static void
+istgt_ev_uctl_read(evutil_socket_t fd, short events, void *arg)
+{
+	ISTGT_Ptr istgt = (ISTGT_Ptr)arg;
+	PORTAL_Ptr uctl_portal;
+	int sock;
+	struct sockaddr_storage sa;
+	socklen_t salen;
+	int i;
+	int rc;
+
+	if ((events | EV_READ) == 0) {
+		ISTGT_ERRLOG("invalid portal group callback\n");
+		return;
+	}
+
+	memset(&sa, 0, sizeof(sa));
+	salen = sizeof(sa);
+
+	ISTGT_TRACELOG(ISTGT_TRACE_NET, "accept %d\n", fd);
+	rc = accept(fd, (struct sockaddr *)&sa, &salen);
+	if (rc < 0) {
+		ISTGT_ERRLOG("accept error: %d\n", rc);
+		return;
+	}
+	sock = rc;
+
+	uctl_portal = NULL;
+	for (i = 0; i < istgt->nuctl_portal; i++) {
+		if (istgt->uctl_portal[i].sock == fd) {
+			uctl_portal = &istgt->uctl_portal[i];
+		}
+	}
+	if (uctl_portal == NULL) {
+		ISTGT_ERRLOG("invalid fd %d for uctl event\n", fd);
+		close(sock);
+		return;
+	}
+
+	rc = istgt_create_uctl(istgt, uctl_portal, sock,
+			       (struct sockaddr *)&sa, salen);
+	if (rc < 0) {
+		ISTGT_ERRLOG("istgt_create_uctl() failed\n");
+		close(sock);
+		return;
+	}
+}
+
+static void
+istgt_ev_sig_pipe_read(evutil_socket_t fd, short events, void *arg)
+{
+	ISTGT_Ptr istgt = (ISTGT_Ptr)arg;
+	/* check for signal thread */
+	char tmp[RELOAD_CMD_LENGTH];
+	int rc;
+	int rc2;
+
+	if ((events | EV_READ) == 0) {
+		ISTGT_ERRLOG("invalid sig_pipe callback\n");
+		return;
+	}
+
+	rc = read(fd, tmp, RELOAD_CMD_LENGTH);
+	if (rc < 0 || rc == 0 || rc != RELOAD_CMD_LENGTH) {
+		ISTGT_ERRLOG("read() failed\n");
+		event_base_loopbreak(istgt->ev_base);
+		return;
+	}
+
+	if (tmp[0] == 'E') {
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+		    "exit request (main loop)\n");
+		event_base_loopbreak(istgt->ev_base);
+		return;
+	}
+
+	if (tmp[0] == 'D') {
+		rc = istgt_pg_delete(istgt);
+		MTX_LOCK(&istgt->reload_mutex);
+		istgt->pg_reload = rc < 0 ? -1 : 1;
+		rc2 = pthread_cond_broadcast(&istgt->reload_cond);
+		if (rc2 != 0) {
+			ISTGT_ERRLOG("cond_broadcast() failed\n");
+		}
+		MTX_UNLOCK(&istgt->reload_mutex);
+		if (rc < 0) {
+			ISTGT_ERRLOG("pg_delete() failed\n");
+			//break;
+		}
+		/* event loop needs to be reloaded with pg changes */
+		event_base_loopexit(istgt->ev_base, NULL);
+		return;
+	}
+
+	if (tmp[0] == 'U') {
+		rc = istgt_pg_update(istgt);
+		MTX_LOCK(&istgt->reload_mutex);
+		istgt->pg_reload = rc < 0 ? -1 : 1;
+		rc2 = pthread_cond_broadcast(&istgt->reload_cond);
+		if (rc2 != 0) {
+			ISTGT_ERRLOG("cond_broadcast() failed\n");
+		}
+		MTX_UNLOCK(&istgt->reload_mutex);
+		if (rc < 0) {
+			ISTGT_ERRLOG("pg_update() failed\n");
+			//break;
+		}
+		/* event loop needs to be reloaded with pg changes */
+		event_base_loopexit(istgt->ev_base, NULL);
+		return;
+	}
+}
+
+
+static void
+istgt_ev_sig_handle(evutil_socket_t signum, short events, void *arg)
+{
+	ISTGT_Ptr istgt = (ISTGT_Ptr)arg;
+
+	if ((events | EV_SIGNAL) == 0) {
+		ISTGT_ERRLOG("invalid signal callback\n");
+		return;
+	}
+
+	if ((signum == SIGINT) || (signum == SIGTERM)) {
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+			       "SIGINT/SIGTERM signal received\n");
+		event_base_loopbreak(istgt->ev_base);
+	}
+}
+
+static void
+istgt_ev_array_del(struct event *ev[], int nidx)
+{
+	int i;
+
+	for (i = 0; i < nidx; i++) {
+		if (event_del(ev[i]) < 0) {
+			ISTGT_ERRLOG("failed to delete event at index %d\n", i);
+		}
+	}
+}
+
+static void
+istgt_ev_array_free(struct event *ev[], int nidx)
+{
+	int i;
+
+	for (i = 0; i < nidx; i++) {
+		event_free(ev[i]);
+	}
+}
+
 static int
 istgt_acceptor(ISTGT_Ptr istgt)
 {
-	PORTAL *pp;
-#ifdef ISTGT_USE_KQUEUE
-	int kq;
-	struct kevent kev;
-	struct timespec kev_timeout;
-	int kqsocks[MAX_PORTAL_GROUP + MAX_UCPORTAL];
-#else
-	struct pollfd fds[MAX_PORTAL_GROUP + MAX_UCPORTAL];
-#endif /* ISTGT_USE_KQUEUE */
-	struct sockaddr_storage sa;
-	socklen_t salen;
-	int sock;
-	int rc, n;
-	int ucidx;
+	struct event_base *ev_base;
+	/* +3 for signal pipe, SIGINT and SIGTERM handlers */
+	struct event *ev[MAX_PORTAL_GROUP + MAX_UCPORTAL + 3];;
+	int rc;
 	int nidx;
 	int i, j;
 
@@ -2286,322 +2483,136 @@ istgt_acceptor(ISTGT_Ptr istgt)
 
 reload:
 	nidx = 0;
-#ifdef ISTGT_USE_KQUEUE
-	kq = kqueue();
-	if (kq == -1) {
-		ISTGT_ERRLOG("kqueue() failed\n");
+
+	ev_base = event_base_new();
+	if (ev_base == NULL) {
+		ISTGT_ERRLOG("event_base_new() failed \n");
 		return -1;
 	}
-	for (i = 0; i < (int)(sizeof kqsocks / sizeof *kqsocks); i++) {
-		kqsocks[i] = -1;
-	}
+
 	MTX_LOCK(&istgt->mutex);
 	for (i = 0; i < istgt->nportal_group; i++) {
 		for (j = 0; j < istgt->portal_group[i].nportals; j++) {
-			if (istgt->portal_group[i].portals[j]->sock >= 0) {
-				ISTGT_EV_SET(&kev, istgt->portal_group[i].portals[j]->sock,
-				    EVFILT_READ, EV_ADD, 0, 0, NULL);
-				rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-				if (rc == -1) {
-					MTX_UNLOCK(&istgt->mutex);
-					ISTGT_ERRLOG("kevent() failed\n");
-					close(kq);
-					return -1;
-				}
-				kqsocks[nidx] = istgt->portal_group[i].portals[j]->sock;
-				nidx++;
+			if (istgt->portal_group[i].portals[j]->sock < 0) {
+				continue;
 			}
+
+			ev[nidx] = event_new(ev_base,
+					istgt->portal_group[i].portals[j]->sock,
+					     EV_READ, istgt_ev_pg_read, istgt);
+			if (ev[nidx] == NULL) {
+				MTX_UNLOCK(&istgt->mutex);
+				ISTGT_ERRLOG("failed to spawn event\n");
+				istgt_ev_array_free(ev, nidx);
+				event_base_free(ev_base);
+				return -1;
+			}
+
+			nidx++;
 		}
 	}
 	MTX_UNLOCK(&istgt->mutex);
-	ucidx = nidx;
 	for (i = 0; i < istgt->nuctl_portal; i++) {
-		ISTGT_EV_SET(&kev, istgt->uctl_portal[i].sock,
-		    EVFILT_READ, EV_ADD, 0, 0, NULL);
-		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
-			close(kq);
+		ev[nidx] = event_new(ev_base, istgt->uctl_portal[i].sock,
+				     EV_READ, istgt_ev_uctl_read, istgt);
+		if (ev[nidx] == NULL) {
+			ISTGT_ERRLOG("failed to spawn event\n");
+			istgt_ev_array_free(ev, nidx);
+			event_base_free(ev_base);
 			return -1;
 		}
-		kqsocks[nidx] = istgt->uctl_portal[i].sock;
+
 		nidx++;
 	}
-	ISTGT_EV_SET(&kev, istgt->sig_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
-	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-	if (rc == -1) {
-		ISTGT_ERRLOG("kevent() failed\n");
-		close(kq);
+
+	ev[nidx] = event_new(ev_base, istgt->sig_pipe[0],
+			     EV_READ, istgt_ev_sig_pipe_read, istgt);
+	if (ev[nidx] == NULL) {
+		ISTGT_ERRLOG("failed to spawn event\n");
+		istgt_ev_array_free(ev, nidx);
+		event_base_free(ev_base);
 		return -1;
 	}
-	kqsocks[nidx] = istgt->sig_pipe[0];
 	nidx++;
 
 	if (!istgt->daemon) {
-		ISTGT_EV_SET(&kev, SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
-			close(kq);
+		ev[nidx] = event_new(ev_base, SIGINT, EV_SIGNAL,
+				     istgt_ev_sig_handle, istgt);
+		if (ev[nidx] == NULL) {
+			ISTGT_ERRLOG("failed to spawn event\n");
+			istgt_ev_array_free(ev, nidx);
+			event_base_free(ev_base);
 			return -1;
 		}
-		ISTGT_EV_SET(&kev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
-			close(kq);
+		nidx++;
+
+		ev[nidx] = event_new(ev_base, SIGTERM, EV_SIGNAL, ev_sig_handle,
+				     istgt);
+		if (ev[nidx] == NULL) {
+			ISTGT_ERRLOG("failed to spawn event\n");
+			istgt_ev_array_free(ev, nidx);
+			event_base_free(ev_base);
 			return -1;
 		}
-	}
-#else
-	memset(&fds, 0, sizeof fds);
-	MTX_LOCK(&istgt->mutex);
-	for (i = 0; i < istgt->nportal_group; i++) {
-		for (j = 0; j < istgt->portal_group[i].nportals; j++) {
-			if (istgt->portal_group[i].portals[j]->sock >= 0) {
-				fds[i].fd = istgt->portal_group[i].portals[j]->sock;
-				fds[i].events = POLLIN;
-				nidx++;
-			}
-		}
-	}
-	MTX_UNLOCK(&istgt->mutex);
-	ucidx = nidx;
-	for (i = 0; i < istgt->nuctl_portal; i++) {
-		fds[ucidx + i].fd = istgt->uctl_portal[i].sock;
-		fds[ucidx + i].events = POLLIN;
 		nidx++;
 	}
-	fds[nidx].fd = istgt->sig_pipe[0];
-	fds[nidx].events = POLLIN;
-	nidx++;
-#endif /* ISTGT_USE_KQUEUE */
+
+	/* schedule all instantiated events for handling */
+	for (i = 0; i < nidx; i++) {
+		if (event_add(ev[i], NULL) < 0) {
+			ISTGT_ERRLOG("failed to add event\n");
+			/* only delete events up to what has been added */
+			istgt_ev_array_del(ev, i);
+			istgt_ev_array_free(ev, nidx);
+			event_base_free(ev_base);
+			return -1;
+		}
+	}
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "loop start\n");
 	while (1) {
+		struct timeval tout;
 		if (istgt_get_state(istgt) != ISTGT_STATE_RUNNING) {
 			break;
 		}
-#ifdef ISTGT_USE_KQUEUE
-		//ISTGT_TRACELOG(ISTGT_TRACE_NET, "kevent %d\n", nidx);
-		kev_timeout.tv_sec = 10;
-		kev_timeout.tv_nsec = 0;
-		rc = kevent(kq, NULL, 0, &kev, 1, &kev_timeout);
-		if (rc == -1 && errno == EINTR) {
-			continue;
-		}
+
+		tout.tv_sec = 10;
+		tout.tv_usec = 0;
+		rc = event_base_loopexit(ev_base, &tout);
 		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
+			ISTGT_ERRLOG("failed to setup event-loop timeout\n");
 			break;
 		}
-		if (rc == 0) {
-			/* idle timeout */
-			//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "kevent TIMEOUT\n");
-			continue;
-		}
-		if (kev.filter == EVFILT_SIGNAL) {
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "kevent SIGNAL\n");
-			if (kev.ident == SIGINT || kev.ident == SIGTERM) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "kevent SIGNAL SIGINT/SIGTERM\n");
-				break;
-			}
-			continue;
-		}
-#else
-		//ISTGT_TRACELOG(ISTGT_TRACE_NET, "poll %d\n", nidx);
-		rc = poll(fds, nidx, POLLWAIT);
-		if (rc == -1 && errno == EINTR) {
-			continue;
-		}
+
+		/* used by callbacks */
+		istgt->ev_base = ev_base;
+
+		rc = event_base_dispatch(ev_base);
+		istgt->ev_base = NULL;
 		if (rc == -1) {
-			ISTGT_ERRLOG("poll() failed\n");
+			ISTGT_ERRLOG("event_base_dispatch() failed\n");
 			break;
 		}
-		if (rc == 0) {
-			/* no fds */
-			//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "poll TIMEOUT\n");
-			continue;
-		}
-#endif /* ISTGT_USE_KQUEUE */
 
-		n = rc;
-		for (i = 0; n != 0 && i < ucidx; i++) {
-#ifdef ISTGT_USE_KQUEUE
-			if (kev.ident == (uintptr_t)kqsocks[i]) {
-				if (kev.flags) {
-					ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					    "flags %x\n",
-					    kev.flags);
-				}
-#else
-			if (fds[i].revents) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "events %x\n",
-				    fds[i].revents);
-			}
-			if (fds[i].revents & POLLIN) {
-#endif /* ISTGT_USE_KQUEUE */
-				n--;
-				memset(&sa, 0, sizeof(sa));
-				salen = sizeof(sa);
-#ifdef ISTGT_USE_KQUEUE
-				ISTGT_TRACELOG(ISTGT_TRACE_NET, "accept %ld\n",
-				    (unsigned long)kev.ident);
-				pp = istgt_get_sock_portal(istgt, kev.ident);
-				rc = accept(kev.ident, (struct sockaddr *) &sa, &salen);
-#else
-				ISTGT_TRACELOG(ISTGT_TRACE_NET, "accept %d\n",
-				    fds[i].fd);
-				pp = istgt_get_sock_portal(istgt, fds[i].fd);
-				rc = accept(fds[i].fd, (struct sockaddr *) &sa, &salen);
-#endif /* ISTGT_USE_KQUEUE */
-				if (rc < 0) {
-					if (errno == ECONNABORTED || errno == ECONNRESET) {
-						continue;
-					}
-					ISTGT_ERRLOG("accept error: %d(errno=%d)\n",
-					    rc, errno);
-					continue;
-				}
-				sock = rc;
-#if 0
-				rc = fcntl(sock, F_GETFL, 0);
-				if (rc == -1) {
-					ISTGT_ERRLOG("fcntl() failed\n");
-					continue;
-				}
-				rc = fcntl(sock, F_SETFL, (rc | O_NONBLOCK));
-				if (rc == -1) {
-					ISTGT_ERRLOG("fcntl() failed\n");
-					continue;
-				}
-#endif
-				rc = istgt_create_conn(istgt, pp, sock,
-				    (struct sockaddr *) &sa, salen);
-				if (rc < 0) {
-					close(sock);
-					ISTGT_ERRLOG("istgt_create_conn() failed\n");
-					continue;
-				}
-			}
-		}
-
-		/* check for control */
-		for (i = 0; n != 0 && i < istgt->nuctl_portal; i++) {
-#ifdef ISTGT_USE_KQUEUE
-			if (kev.ident == (uintptr_t)istgt->uctl_portal[i].sock) {
-				if (kev.flags) {
-					ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-					    "flags %x\n",
-					    kev.flags);
-				}
-#else
-			if (fds[ucidx + i].revents) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "events %x\n",
-				    fds[ucidx + i].revents);
-			}
-			if (fds[ucidx + i].revents & POLLIN) {
-#endif /* ISTGT_USE_KQUEUE */
-				n--;
-				memset(&sa, 0, sizeof(sa));
-				salen = sizeof(sa);
-#ifdef ISTGT_USE_KQUEUE
-				ISTGT_TRACELOG(ISTGT_TRACE_NET,
-				    "accept %ld\n", (unsigned long)kev.ident);
-				rc = accept(kev.ident,
-				    (struct sockaddr *) &sa, &salen);
-#else
-				ISTGT_TRACELOG(ISTGT_TRACE_NET,
-				    "accept %d\n", fds[ucidx + i].fd);
-				rc = accept(fds[ucidx + i].fd,
-				    (struct sockaddr *) &sa, &salen);
-#endif /* ISTGT_USE_KQUEUE */
-				if (rc < 0) {
-					ISTGT_ERRLOG("accept error: %d\n", rc);
-					continue;
-				}
-				sock = rc;
-				rc = istgt_create_uctl(istgt,
-				    &istgt->uctl_portal[i], sock,
-				    (struct sockaddr *) &sa, salen);
-				if (rc < 0) {
-					close(sock);
-					ISTGT_ERRLOG("istgt_create_uctl() failed\n");
-					continue;
-				}
-			}
-		}
-
-		/* check for signal thread */
-#ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == (uintptr_t)istgt->sig_pipe[0]) {
-			if (kev.flags & (EV_EOF|EV_ERROR)) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "kevent EOF/ERROR\n");
-				break;
-			}
-#else
-		if (fds[nidx - 1].revents & POLLHUP) {
+		/*
+		 * events trigger loopexit or loopbreak, depending on whether
+		 * the event-loop should run again after portal reprocessing
+		 * (loopexit), or break the event loop completely (loopbreak).
+		 */
+		if (event_base_got_break(ev_base)) {
+			/* told to exit via signal, pipe msg, etc. */
 			break;
 		}
-		if (fds[nidx - 1].revents & POLLIN) {
-#endif /* ISTGT_USE_KQUEUE */
-			char tmp[RELOAD_CMD_LENGTH];
-			//int pgp_idx;
-			int rc2;
 
-			rc = read(istgt->sig_pipe[0], tmp, RELOAD_CMD_LENGTH);
-			if (rc < 0 || rc == 0 || rc != RELOAD_CMD_LENGTH) {
-				ISTGT_ERRLOG("read() failed\n");
-				break;
-			}
-			//pgp_idx = (int)DGET32(&tmp[1]);
-
-			if (tmp[0] == 'E') {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "exit request (main loop)\n");
-				break;
-			}
-			if (tmp[0] == 'D') {
-				rc = istgt_pg_delete(istgt);
-				MTX_LOCK(&istgt->reload_mutex);
-				istgt->pg_reload = rc < 0 ? -1 : 1;
-				rc2 = pthread_cond_broadcast(&istgt->reload_cond);
-				if (rc2 != 0) {
-					ISTGT_ERRLOG("cond_broadcast() failed\n");
-				}
-				MTX_UNLOCK(&istgt->reload_mutex);
-				if (rc < 0) {
-					ISTGT_ERRLOG("pg_delete() failed\n");
-					//break;
-				}
-			}
-			if (tmp[0] == 'U') {
-				rc = istgt_pg_update(istgt);
-				MTX_LOCK(&istgt->reload_mutex);
-				istgt->pg_reload = rc < 0 ? -1 : 1;
-				rc2 = pthread_cond_broadcast(&istgt->reload_cond);
-				if (rc2 != 0) {
-					ISTGT_ERRLOG("cond_broadcast() failed\n");
-				}
-				MTX_UNLOCK(&istgt->reload_mutex);
-				if (rc < 0) {
-					ISTGT_ERRLOG("pg_update() failed\n");
-					//break;
-				}
-			}
-#ifdef ISTGT_USE_KQUEUE
-			close(kq);
-#endif /* ISTGT_USE_KQUEUE */
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "reload accept loop\n");
-			goto reload;
-		}
+		istgt_ev_array_del(ev, nidx);
+		istgt_ev_array_free(ev, nidx);
+		event_base_free(ev_base);
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "reload accept loop\n");
+		goto reload;
 	}
-#ifdef ISTGT_USE_KQUEUE
-	close(kq);
-#endif /* ISTGT_USE_KQUEUE */
+	istgt_ev_array_del(ev, nidx);
+	istgt_ev_array_free(ev, nidx);
+	event_base_free(ev_base);
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "loop ended\n");
 	istgt_set_state(istgt, ISTGT_STATE_EXITING);
 	istgt_lu_set_all_state(istgt, ISTGT_STATE_EXITING);
@@ -2771,11 +2782,7 @@ main(int argc, char **argv)
 	default:
 		break;
 	}
-#ifdef ISTGT_USE_KQUEUE
-	ISTGT_NOTICELOG("using kqueue\n");
-#else
-	ISTGT_NOTICELOG("using poll\n");
-#endif /* ISTGT_USE_KQUEUE */
+	ISTGT_NOTICELOG("using libevent\n");
 #ifdef USE_ATOMIC
 	ISTGT_NOTICELOG("using host atomic\n");
 #elif defined (USE_GCC_ATOMIC)
