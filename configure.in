@@ -73,6 +73,8 @@ esac
 # Checks for libraries.
 AC_CHECK_LIB([pthread], [pthread_create])
 AC_CHECK_LIB([cam], [cam_open_spec_device])
+AC_CHECK_LIB([event], [event_base_new], [],
+	     [AC_MSG_FAILURE([libevent library required])], [])
 
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h inttypes.h limits.h netdb.h netinet/in.h stddef.h stdint.h stdlib.h string.h sys/ioctl.h sys/param.h sys/socket.h sys/time.h syslog.h unistd.h])
