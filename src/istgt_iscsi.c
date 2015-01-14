@@ -68,6 +68,11 @@
 #include <sys/time.h>
 #endif
 
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+#include <event2/util.h>
+#include <event2/event.h>
+
 #if !defined(__GNUC__)
 #undef __attribute__
 #define __attribute__(x)
@@ -5110,151 +5115,146 @@ istgt_iscsi_execute(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
 	return 0;
 }
 
+struct istgt_iscsi_ev_wait_task_state {
+	struct event_base *ev_base;
+	struct event *ev;
+	CONN_Ptr conn;
+};
+
+static void
+istgt_iscsi_ev_wait_task_read(evutil_socket_t fd, short events, void *arg)
+{
+	struct istgt_iscsi_ev_wait_task_state *state
+				= (struct istgt_iscsi_ev_wait_task_state *)arg;
+	ISTGT_LU_TASK_Ptr lu_task;
+	int rc;
+	char tmp[1];
+
+	if ((events | EV_READ) == 0) {
+		ISTGT_ERRLOG("invalid iscsi task callback\n");
+		event_base_loopbreak(state->ev_base);
+		return;
+	}
+
+	rc = read(fd, tmp, 1);
+	if (rc < 0 || rc == 0 || rc != 1) {
+		ISTGT_ERRLOG("read() failed\n");
+		event_base_loopbreak(state->ev_base);
+		return;
+	}
+
+	MTX_LOCK(&state->conn->task_queue_mutex);
+	lu_task = istgt_queue_dequeue(&state->conn->task_queue);
+	MTX_UNLOCK(&state->conn->task_queue_mutex);
+	if (lu_task == NULL) {
+		ISTGT_ERRLOG("lu_task is NULL\n");
+		event_base_loopbreak(state->ev_base);
+		return;
+	}
+
+	if (lu_task->lu_cmd.W_bit) {
+		/* write */
+		if (lu_task->req_transfer_out != 0) {
+			/* error transfer */
+			lu_task->error = 1;
+			lu_task->abort = 1;
+			rc = pthread_cond_broadcast(&lu_task->trans_cond);
+			if (rc != 0) {
+				ISTGT_ERRLOG("cond_broadcast() failed\n");
+				/* ignore error */
+			}
+		} else {
+			if (lu_task->req_execute) {
+				state->conn->running_tasks--;
+				if (state->conn->running_tasks == 0) {
+					ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+					    "task cleanup finished\n");
+					event_base_loopbreak(state->ev_base);
+					return;
+				}
+			}
+			/* ignore response */
+			rc = istgt_lu_destroy_task(lu_task);
+			if (rc < 0) {
+				ISTGT_ERRLOG("lu_destroy_task() failed\n");
+				/* ignore error */
+			}
+		}
+	} else {
+		/* read or no data, ignore response */
+		rc = istgt_lu_destroy_task(lu_task);
+		if (rc < 0) {
+			ISTGT_ERRLOG("lu_destroy_task() failed\n");
+			/* ignore error */
+		}
+	}
+}
+
 static void
 wait_all_task(CONN_Ptr conn)
 {
-	ISTGT_LU_TASK_Ptr lu_task;
-#ifdef ISTGT_USE_KQUEUE
-	int kq;
-	struct kevent kev;
-	struct timespec kev_timeout;
-#else
-	struct pollfd fds[1];
-#endif /* ISTGT_USE_KQUEUE */
-	int msec = 30 * 1000;
+	struct istgt_iscsi_ev_wait_task_state state;
+	struct timeval tout;
 	int rc;
 
 	if (conn->running_tasks == 0)
 		return;
 
-#ifdef ISTGT_USE_KQUEUE
-	kq = kqueue();
-	if (kq == -1) {
-		ISTGT_ERRLOG("kqueue() failed\n");
+	state.ev_base = event_base_new();
+	if (state.ev_base == NULL) {
+		ISTGT_ERRLOG("event_base_new() failed \n");
 		return;
 	}
-	ISTGT_EV_SET(&kev, conn->task_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
-	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-	if (rc == -1) {
-		ISTGT_ERRLOG("kevent() failed\n");
-		close(kq);
+
+	state.ev = event_new(state.ev_base, conn->task_pipe[0], EV_READ,
+			     istgt_iscsi_ev_wait_task_read, &state);
+	if (state.ev == NULL) {
+		ISTGT_ERRLOG("failed to spawn iscsi task event\n");
+		event_base_free(state.ev_base);
 		return;
 	}
-#else
-	fds[0].fd = conn->task_pipe[0];
-	fds[0].events = POLLIN;
-#endif /* ISTGT_USE_KQUEUE */
+
+	if (event_add(state.ev, NULL) < 0) {
+		ISTGT_ERRLOG("failed to add iscsi task event\n");
+		event_free(state.ev);
+		event_base_free(state.ev_base);
+		return;
+	}
+
+	state.conn = conn;
 
 	/* wait all running tasks */
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
 	    "waiting task start (%d) (left %d tasks)\n",
 	    conn->id, conn->running_tasks);
-	while (1) {
-#ifdef ISTGT_USE_KQUEUE
-		kev_timeout.tv_sec = msec / 1000;
-		kev_timeout.tv_nsec = (msec % 1000) * 1000000;
-		rc = kevent(kq, NULL, 0, &kev, 1, &kev_timeout);
-		if (rc == -1 && errno == EINTR) {
-			continue;
-		}
-		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
-			break;
-		}
-		if (rc == 0) {
-			ISTGT_ERRLOG("waiting task timeout (left %d tasks)\n",
-			    conn->running_tasks);
-			break;
-		}
-#else
-		rc = poll(fds, 1, msec);
-		if (rc == -1 && errno == EINTR) {
-			continue;
-		}
-		if (rc == -1) {
-			ISTGT_ERRLOG("poll() failed\n");
-			break;
-		}
-		if (rc == 0) {
-			ISTGT_ERRLOG("waiting task timeout (left %d tasks)\n",
-			    conn->running_tasks);
-			break;
-		}
-#endif /* ISTGT_USE_KQUEUE */
 
-#ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == (uintptr_t)conn->task_pipe[0]) {
-			if (kev.flags & (EV_EOF|EV_ERROR)) {
-				break;
-			}
-#else
-		if (fds[0].revents & POLLHUP) {
-			break;
-		}
-		if (fds[0].revents & POLLIN) {
-#endif /* ISTGT_USE_KQUEUE */
-			char tmp[1];
-
-			rc = read(conn->task_pipe[0], tmp, 1);
-			if (rc < 0 || rc == 0 || rc != 1) {
-				ISTGT_ERRLOG("read() failed\n");
-				break;
-			}
-
-			MTX_LOCK(&conn->task_queue_mutex);
-			lu_task = istgt_queue_dequeue(&conn->task_queue);
-			MTX_UNLOCK(&conn->task_queue_mutex);
-			if (lu_task != NULL) {
-				if (lu_task->lu_cmd.W_bit) {
-					/* write */
-					if (lu_task->req_transfer_out != 0) {
-						/* error transfer */
-						lu_task->error = 1;
-						lu_task->abort = 1;
-						rc = pthread_cond_broadcast(&lu_task->trans_cond);
-						if (rc != 0) {
-							ISTGT_ERRLOG("cond_broadcast() failed\n");
-							/* ignore error */
-						}
-					} else {
-						if (lu_task->req_execute) {
-							conn->running_tasks--;
-							if (conn->running_tasks == 0) {
-								ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-								    "task cleanup finished\n");
-								break;
-							}
-						}
-						/* ignore response */
-						rc = istgt_lu_destroy_task(lu_task);
-						if (rc < 0) {
-							ISTGT_ERRLOG("lu_destroy_task() failed\n");
-							/* ignore error */
-						}
-					}
-				} else {
-					/* read or no data */
-					/* ignore response */
-					rc = istgt_lu_destroy_task(lu_task);
-					if (rc < 0) {
-						ISTGT_ERRLOG("lu_destroy_task() failed\n");
-						/* ignore error */
-					}
-				}
-			} else {
-				ISTGT_ERRLOG("lu_task is NULL\n");
-				break;
-			}
-		}
+	/* wait a maximum of 30 seconds for a task pipe event */
+	tout.tv_sec = 30;
+	tout.tv_usec = 0;
+	rc = event_base_loopexit(state.ev_base, &tout);
+	if (rc == -1) {
+		ISTGT_ERRLOG("failed to setup event-loop timeout\n");
+		event_free(state.ev);
+		event_base_free(state.ev_base);
+		return;
 	}
 
+	rc = event_base_dispatch(state.ev_base);
+	if (rc == -1) {
+		ISTGT_ERRLOG("event_base_dispatch() failed\n");
+	} else if (event_base_got_exit(state.ev_base)) {
+		ISTGT_ERRLOG("waiting task timeout (left %d tasks)\n",
+			     conn->running_tasks);
+	}
+	/* else got break from wait_task_read callback */
+
 	istgt_clear_all_transfer_task(conn);
-#ifdef ISTGT_USE_KQUEUE
-	close(kq);
-#endif /* ISTGT_USE_KQUEUE */
+	event_del(state.ev);
+	event_free(state.ev);
+	event_base_free(state.ev_base);
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-	    "waiting task end (%d) (left %d tasks)\n",
-	    conn->id, conn->running_tasks);
+		       "waiting task end (%d) (left %d tasks)\n",
+		       conn->id, conn->running_tasks);
 }
 
 static void
