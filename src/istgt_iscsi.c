@@ -62,12 +62,6 @@
 #include "istgt_scsi.h"
 #include "istgt_queue.h"
 
-#ifdef ISTGT_USE_KQUEUE
-#include <sys/types.h>
-#include <sys/event.h>
-#include <sys/time.h>
-#endif
-
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
 #include <event2/util.h>
@@ -5314,10 +5308,7 @@ worker_cleanup(CONN_Ptr conn)
 		pthread_join(conn->sender_thread, NULL);
 	}
 	close(conn->sock);
-#ifdef ISTGT_USE_KQUEUE
-	close(conn->kq);
-	conn->kq = -1;
-#endif /* ISTGT_USE_KQUEUE */
+	/* conn->ev_base freed on event loop exit */
 	sleep(1);
 
 	/* cleanup conn & sess */
@@ -5453,23 +5444,377 @@ sender(void *arg)
 	return NULL;
 }
 
+static void
+conn_worker_ev_pdu_exec(CONN_Ptr conn)
+{
+	int rc;
+	int opcode;
+
+	opcode = BGET8W(&conn->pdu.bhs.opcode, 5, 6);
+
+	if (conn->state != CONN_STATE_RUNNING) {
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+
+	if (g_trace_flag) {
+		if (conn->sess != NULL) {
+			SESS_MTX_LOCK(conn);
+			ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
+			    "isid=%"PRIx64", tsih=%u, cid=%u, op=%x\n",
+			    conn->sess->isid, conn->sess->tsih,
+			    conn->cid, opcode);
+			SESS_MTX_UNLOCK(conn);
+		} else {
+			ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
+			    "isid=xxx, tsih=xxx, cid=%u, op=%x\n",
+			    conn->cid, opcode);
+		}
+	}
+	rc = istgt_iscsi_execute(conn, &conn->pdu);
+	if (rc < 0) {
+		ISTGT_ERRLOG("iscsi_execute() failed on %s(%s)\n",
+		    conn->target_port, conn->initiator_port);
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+	if (g_trace_flag) {
+		if (conn->sess != NULL) {
+			SESS_MTX_LOCK(conn);
+			ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
+			    "isid=%"PRIx64", tsih=%u, cid=%u, op=%x complete\n",
+			    conn->sess->isid, conn->sess->tsih,
+			    conn->cid, opcode);
+			SESS_MTX_UNLOCK(conn);
+		} else {
+			ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
+			    "isid=xxx, tsih=xxx, cid=%u, op=%x complete\n",
+			    conn->cid, opcode);
+		}
+	}
+
+#if 0
+	if (opcode == ISCSI_OP_LOGIN) {
+		//ISTGT_NOTICELOG("OP LOGIN: %s\n", conn->initiator_port);
+		istgt_yield();
+		if (conn->full_feature) {
+			//ISTGT_NOTICELOG("full_feature %s\n", conn->initiator_port);
+		}
+	}
+#endif
+	if (opcode == ISCSI_OP_LOGOUT) {
+		ISTGT_TRACELOG(ISTGT_TRACE_ISCSI, "logout received\n");
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+
+	if (conn->pdu.copy_pdu == 0) {
+		xfree(conn->pdu.ahs);
+		conn->pdu.ahs = NULL;
+		if (conn->pdu.data != conn->pdu.shortdata) {
+			xfree(conn->pdu.data);
+		}
+		conn->pdu.data = NULL;
+	}
+}
+
+static void
+conn_worker_ev_sock_read(evutil_socket_t fd, short events, void *arg)
+{
+	CONN_Ptr conn = (CONN_Ptr)arg;
+	ISCSI_PDU_Ptr pdu;
+	int rc;
+
+	if ((events | EV_READ) == 0) {
+		ISTGT_ERRLOG("invalid conn socket callback: %d\n", events);
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+
+	conn->pdu.copy_pdu = 0;
+	rc = istgt_iscsi_read_pdu(conn, &conn->pdu);
+	if (rc < 0) {
+		if (conn->state != CONN_STATE_EXITING) {
+			ISTGT_ERRLOG("conn->state = %d\n", conn->state);
+		}
+		if (conn->state != CONN_STATE_RUNNING) {
+			if (errno == EINPROGRESS) {
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				    "iscsi_read_pdu() RUNNING - sleeping\n");
+				sleep(1);
+				return;
+			}
+			if (errno == ECONNRESET
+			    || errno == ETIMEDOUT) {
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				    "iscsi_read_pdu() RESET/TIMEOUT\n");
+			} else {
+				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				    "iscsi_read_pdu() EOF\n");
+			}
+			event_base_loopbreak(conn->ev_base);
+			return;
+		}
+		ISTGT_ERRLOG("iscsi_read_pdu() failed\n");
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+
+	while (1) {
+		/* process PDU - sets loopbreak on ev_base if necessary */
+		conn_worker_ev_pdu_exec(conn);
+		if (event_base_got_break(conn->ev_base)) {
+			break;
+		}
+
+		/* execute pending PDUs */
+		pdu = istgt_queue_dequeue(&conn->pending_pdus);
+		if (pdu == NULL) {
+			/* nothing queued, stay in event loop */
+			break;
+		}
+
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "execute pending PDU\n");
+		rc = istgt_iscsi_copy_pdu(&conn->pdu, pdu);
+		conn->pdu.copy_pdu = 0;
+		xfree(pdu);
+	}
+}
+
+static void
+conn_worker_ev_task_read(evutil_socket_t fd, short events, void *arg)
+{
+	CONN_Ptr conn = (CONN_Ptr)arg;
+	ISTGT_LU_TASK_Ptr lu_task;
+	ISCSI_PDU_Ptr pdu;
+	char tmp[1];
+	int rc;
+
+	if ((events | EV_READ) == 0) {
+		ISTGT_ERRLOG("invalid conn socket callback: %d\n", events);
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+
+	//ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "Queue Task START\n");
+
+	rc = read(fd, tmp, 1);
+	if (rc < 0 || rc == 0 || rc != 1) {
+		ISTGT_ERRLOG("read() failed\n");
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+	if (tmp[0] == 'E') {
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "exit request (%d)\n",
+		    conn->id);
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+
+	/* DATA-IN/OUT */
+	MTX_LOCK(&conn->task_queue_mutex);
+	rc = istgt_queue_count(&conn->task_queue);
+	lu_task = istgt_queue_dequeue(&conn->task_queue);
+	MTX_UNLOCK(&conn->task_queue_mutex);
+	if (lu_task != NULL) {
+		if (conn->exec_lu_task != NULL) {
+			ISTGT_ERRLOG("task is overlapped (CmdSN=%u, %u)\n",
+			    conn->exec_lu_task->lu_cmd.CmdSN,
+			    lu_task->lu_cmd.CmdSN);
+			event_base_loopbreak(conn->ev_base);
+			return;
+		}
+		conn->exec_lu_task = lu_task;
+		if (lu_task->lu_cmd.W_bit) {
+			/* write */
+			if (lu_task->req_transfer_out == 0) {
+				if (lu_task->req_execute) {
+					if (conn->running_tasks > 0) {
+						conn->running_tasks--;
+					} else {
+						ISTGT_ERRLOG("running no task\n");
+					}
+				}
+				rc = istgt_iscsi_task_response(conn, lu_task);
+				if (rc < 0) {
+					lu_task->error = 1;
+					ISTGT_ERRLOG("iscsi_task_response() failed on %s(%s)\n",
+					    conn->target_port,
+					    conn->initiator_port);
+					event_base_loopbreak(conn->ev_base);
+					return;
+				}
+				rc = istgt_lu_destroy_task(lu_task);
+				if (rc < 0) {
+					ISTGT_ERRLOG("lu_destroy_task() failed\n");
+					event_base_loopbreak(conn->ev_base);
+					return;
+				}
+				lu_task = NULL;
+				conn->exec_lu_task = NULL;
+			} else {
+				//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				//    "Task Write Trans START\n");
+				rc = istgt_iscsi_task_transfer_out(conn, lu_task);
+				if (rc < 0) {
+					lu_task->error = 1;
+					ISTGT_ERRLOG("iscsi_task_transfer_out() failed on %s(%s)\n",
+					    conn->target_port,
+					    conn->initiator_port);
+					event_base_loopbreak(conn->ev_base);
+					return;
+				}
+				//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+				//    "Task Write Trans END\n");
+
+				MTX_LOCK(&lu_task->trans_mutex);
+				lu_task->req_transfer_out = 0;
+
+				/* need response after execution */
+				lu_task->req_execute = 1;
+				if (conn->use_sender == 0) {
+					conn->running_tasks++;
+				}
+
+				rc = pthread_cond_broadcast(&lu_task->trans_cond);
+				MTX_UNLOCK(&lu_task->trans_mutex);
+				if (rc != 0) {
+					ISTGT_ERRLOG("cond_broadcast() failed\n");
+					event_base_loopbreak(conn->ev_base);
+					return;
+				}
+				lu_task = NULL;
+				conn->exec_lu_task = NULL;
+			}
+		} else {
+			/* read or no data */
+			rc = istgt_iscsi_task_response(conn, lu_task);
+			if (rc < 0) {
+				lu_task->error = 1;
+				ISTGT_ERRLOG("iscsi_task_response() failed on %s(%s)\n",
+				    conn->target_port,
+				    conn->initiator_port);
+				event_base_loopbreak(conn->ev_base);
+				return;
+			}
+			rc = istgt_lu_destroy_task(lu_task);
+			if (rc < 0) {
+				ISTGT_ERRLOG("lu_destroy_task() failed\n");
+				event_base_loopbreak(conn->ev_base);
+				return;
+			}
+			lu_task = NULL;
+			conn->exec_lu_task = NULL;
+		}
+	}
+
+	while (1) {
+		/* process PDU - sets loopbreak on ev_base if necessary */
+		conn_worker_ev_pdu_exec(conn);
+		if (event_base_got_break(conn->ev_base)) {
+			break;
+		}
+
+		/* execute pending PDUs */
+		pdu = istgt_queue_dequeue(&conn->pending_pdus);
+		if (pdu == NULL) {
+			/* nothing queued, stay in event loop */
+			break;
+		}
+
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "pending in task\n");
+		rc = istgt_iscsi_copy_pdu(&conn->pdu, pdu);
+		conn->pdu.copy_pdu = 0;
+		xfree(pdu);
+	}
+}
+
+
+static void
+conn_worker_ev_sig_handle(evutil_socket_t signum, short events, void *arg)
+{
+	CONN_Ptr conn = (CONN_Ptr)arg;
+
+	if ((events | EV_SIGNAL) == 0) {
+		ISTGT_ERRLOG("invalid signal callback\n");
+		return;
+	}
+
+	if ((signum == SIGINT) || (signum == SIGTERM)) {
+		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
+			       "SIGINT/SIGTERM signal received\n");
+		event_base_loopbreak(conn->ev_base);
+	}
+}
+
+static void
+conn_worker_ev_exit_check(evutil_socket_t ignore __attribute__((__unused__)),
+			  short events __attribute__((__unused__)),
+			  void *arg)
+{
+	CONN_Ptr conn = (CONN_Ptr)arg;
+	ISTGT_LU_Ptr lu;
+
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "checking exit state\n");
+
+	/* check exit request */
+	if (conn->sess != NULL) {
+		SESS_MTX_LOCK(conn);
+		lu = conn->sess->lu;
+		SESS_MTX_UNLOCK(conn);
+	} else {
+		lu = NULL;
+	}
+	if (lu != NULL) {
+		if (istgt_lu_get_state(lu) != ISTGT_STATE_RUNNING) {
+			conn->state = CONN_STATE_EXITING;
+			event_base_loopbreak(conn->ev_base);
+			return;
+		}
+	} else {
+		if (istgt_get_state(conn->istgt) != ISTGT_STATE_RUNNING) {
+			conn->state = CONN_STATE_EXITING;
+			event_base_loopbreak(conn->ev_base);
+			return;
+		}
+	}
+
+	if (conn->state != CONN_STATE_RUNNING) {
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+}
+
+static void
+conn_worker_ev_nop_send(evutil_socket_t ignore __attribute__((__unused__)),
+			short events __attribute__((__unused__)),
+			void *arg)
+{
+	CONN_Ptr conn = (CONN_Ptr)arg;
+	int rc;
+
+	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "sending NOPIN to initiator\n");
+
+	rc = istgt_iscsi_send_nopin(conn);
+	if (rc < 0) {
+		ISTGT_ERRLOG("iscsi_send_nopin() failed\n");
+		event_base_loopbreak(conn->ev_base);
+		return;
+	}
+}
+
 static void *
 worker(void *arg)
 {
 	CONN_Ptr conn = (CONN_Ptr) arg;
-	ISTGT_LU_TASK_Ptr lu_task;
-	ISTGT_LU_Ptr lu;
-	ISCSI_PDU_Ptr pdu;
 	sigset_t signew, sigold;
-#ifdef ISTGT_USE_KQUEUE
-	int kq;
-	struct kevent kev;
-	struct timespec kev_timeout;
-#else
-	struct pollfd fds[2];
-	int nopin_timer;
-#endif /* ISTGT_USE_KQUEUE */
-	int opcode;
+	struct event_base *ev_base;
+	struct event *ev_sock;
+	struct event *ev_task;
+	struct event *ev_sig[2] = { NULL, NULL };
+	struct timeval tout;
+	struct event *ev_exit_check;
+	struct event *ev_nop = NULL;
 	int rc;
 
 	ISTGT_TRACELOG(ISTGT_TRACE_NET, "connect to %s:%s,%d\n",
@@ -5479,62 +5824,89 @@ worker(void *arg)
 	    conn->portal.host, conn->portal.port, conn->portal.tag);
 #endif
 
-#ifdef ISTGT_USE_KQUEUE
-	kq = kqueue();
-	if (kq == -1) {
-		ISTGT_ERRLOG("kqueue() failed\n");
-		return NULL;
-	}
-	conn->kq = kq;
-#if defined (ISTGT_USE_IOVEC) && defined (NOTE_LOWAT)
-	ISTGT_EV_SET(&kev, conn->sock, EVFILT_READ, EV_ADD, NOTE_LOWAT, ISCSI_BHS_LEN, NULL);
-#else
-	ISTGT_EV_SET(&kev, conn->sock, EVFILT_READ, EV_ADD, 0, 0, NULL);
-#endif
-	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-	if (rc == -1) {
-		ISTGT_ERRLOG("kevent() failed\n");
-		close(kq);
-		return NULL;
-	}
-	ISTGT_EV_SET(&kev, conn->task_pipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
-	rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-	if (rc == -1) {
-		ISTGT_ERRLOG("kevent() failed\n");
-		close(kq);
+	ev_base = event_base_new();
+	if (ev_base == NULL) {
+		ISTGT_ERRLOG("event_base_new() failed \n");
 		return NULL;
 	}
 
+	/* TODO use bufferevent_socket_new() with an ISCSI_BHS_LEN watermark */
+	ev_sock = event_new(ev_base, conn->sock, EV_READ | EV_PERSIST,
+			    conn_worker_ev_sock_read, conn);
+	if (ev_sock == NULL) {
+		ISTGT_ERRLOG("failed to spawn event\n");
+		goto err_base_free;
+	}
+	if (event_add(ev_sock, NULL) < 0) {
+		goto err_sock_free;
+	}
+
+	ev_task = event_new(ev_base, conn->task_pipe[0], EV_READ | EV_PERSIST,
+			    conn_worker_ev_task_read, conn);
+	if (ev_sock == NULL) {
+		ISTGT_ERRLOG("failed to spawn event\n");
+		goto err_sock_del;
+	}
+	if (event_add(ev_task, NULL) < 0) {
+		goto err_task_free;
+	}
+
 	if (!conn->istgt->daemon) {
-		ISTGT_EV_SET(&kev, SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
-			close(kq);
-			return NULL;
+		ev_sig[0] = event_new(ev_base, SIGINT, EV_SIGNAL | EV_PERSIST,
+				      conn_worker_ev_sig_handle, conn);
+		if (ev_sig[0] == NULL) {
+			ISTGT_ERRLOG("failed to spawn event\n");
+			goto err_task_del;
 		}
-		ISTGT_EV_SET(&kev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		rc = kevent(kq, &kev, 1, NULL, 0, NULL);
-		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
-			close(kq);
-			return NULL;
+		if (event_add(ev_sig[0], NULL) < 0) {
+			goto err_sigint_free;
+		}
+
+		ev_sig[1] = event_new(ev_base, SIGTERM, EV_SIGNAL | EV_PERSIST,
+				      conn_worker_ev_sig_handle, conn);
+		if (ev_sig[1] == NULL) {
+			ISTGT_ERRLOG("failed to spawn event\n");
+			goto err_sigint_del;
+		}
+		if (event_add(ev_sig[1], NULL) < 0) {
+			goto err_sigterm_free;
 		}
 	}
-#else
-	memset(&fds, 0, sizeof fds);
-	fds[0].fd = conn->sock;
-	fds[0].events = POLLIN;
-	fds[1].fd = conn->task_pipe[0];
-	fds[1].events = POLLIN;
-#endif /* ISTGT_USE_KQUEUE */
+
+	/* check for exit every 20 seconds */
+	tout.tv_sec = 20;
+	tout.tv_usec = 0;
+	ev_exit_check = event_new(ev_base, -1, EV_PERSIST,
+				  conn_worker_ev_exit_check, conn);
+	if (ev_exit_check == NULL) {
+		ISTGT_ERRLOG("failed to spawn event\n");
+		goto err_sigterm_del;
+	}
+	if (event_add(ev_exit_check, &tout) < 0) {
+		goto err_exit_check_free;
+	}
+
+	/* ping initiator every @nopininterval */
+	if (conn->nopininterval != 0) {
+		tout.tv_sec = conn->nopininterval / 1000;
+		tout.tv_usec = (conn->nopininterval % 1000) * 1000;
+
+		ev_nop = event_new(ev_base, -1, EV_PERSIST,
+				   conn_worker_ev_nop_send, conn);
+		if (ev_nop == NULL) {
+			ISTGT_ERRLOG("failed to spawn event\n");
+			goto err_exit_check_del;
+		}
+		if (event_add(ev_nop, &tout) < 0) {
+			goto err_nop_free;
+		}
+	}
 
 	conn->pdu.ahs = NULL;
 	conn->pdu.data = NULL;
 	conn->pdu.copy_pdu = 0;
 	conn->state = CONN_STATE_RUNNING;
 	conn->exec_lu_task = NULL;
-	lu_task = NULL;
 
 	conn->use_sender = 0;
 	if (conn->istgt->swmode >= ISTGT_SWMODE_NORMAL) {
@@ -5560,365 +5932,73 @@ worker(void *arg)
 	pthread_sigmask(SIG_UNBLOCK, &signew, &sigold);
 
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "loop start (%d)\n", conn->id);
-#ifndef ISTGT_USE_KQUEUE
-	nopin_timer = conn->nopininterval;
-#endif /* !ISTGT_USE_KQUEUE */
 	while (1) {
-		/* check exit request */
-		if (conn->sess != NULL) {
-			SESS_MTX_LOCK(conn);
-			lu = conn->sess->lu;
-			SESS_MTX_UNLOCK(conn);
-		} else {
-			lu = NULL;
-		}
-		if (lu != NULL) {
-			if (istgt_lu_get_state(lu) != ISTGT_STATE_RUNNING) {
-				conn->state = CONN_STATE_EXITING;
-				break;
-			}
-		} else {
-			if (istgt_get_state(conn->istgt) != ISTGT_STATE_RUNNING) {
-				conn->state = CONN_STATE_EXITING;
-				break;
-			}
-		}
-
-		if (conn->state != CONN_STATE_RUNNING) {
-			break;
-		}
-
-#ifdef ISTGT_USE_KQUEUE
 		ISTGT_TRACELOG(ISTGT_TRACE_NET,
-		    "kevent sock %d (timeout %dms)\n",
+		    "libevent sock %d (timeout %dms)\n",
 		    conn->sock, conn->nopininterval);
-		if (conn->nopininterval != 0) {
-			kev_timeout.tv_sec = conn->nopininterval / 1000;
-			kev_timeout.tv_nsec = (conn->nopininterval % 1000) * 1000000;
-		} else {
-			kev_timeout.tv_sec = DEFAULT_NOPININTERVAL;
-			kev_timeout.tv_nsec = 0;
-		}
-		rc = kevent(kq, NULL, 0, &kev, 1, &kev_timeout);
-		if (rc == -1 && errno == EINTR) {
-			//ISTGT_ERRLOG("EINTR kevent\n");
-			continue;
-		}
+
+		/* used by callbacks */
+		conn->ev_base = ev_base;
+
+		rc = event_base_dispatch(ev_base);
+		conn->ev_base = NULL;
 		if (rc == -1) {
-			ISTGT_ERRLOG("kevent() failed\n");
+			ISTGT_ERRLOG("event_base_dispatch() failed\n");
 			break;
 		}
-		if (rc == 0) {
-			/* idle timeout, send diagnosis packet */
-			if (conn->nopininterval != 0) {
-				rc = istgt_iscsi_send_nopin(conn);
-				if (rc < 0) {
-					ISTGT_ERRLOG("iscsi_send_nopin() failed\n");
-					break;
-				}
-			}
-			continue;
-		}
-		if (kev.filter == EVFILT_SIGNAL) {
-			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "kevent SIGNAL\n");
-			if (kev.ident == SIGINT || kev.ident == SIGTERM) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "kevent SIGNAL SIGINT/SIGTERM\n");
-				break;
-			}
-			continue;
-		}
-#else
-		//ISTGT_TRACELOG(ISTGT_TRACE_NET, "poll sock %d\n", conn->sock);
-		rc = poll(fds, 2, POLLWAIT);
-		if (rc == -1 && errno == EINTR) {
-			//ISTGT_ERRLOG("EINTR poll\n");
-			continue;
-		}
-		if (rc == -1) {
-			ISTGT_ERRLOG("poll() failed\n");
+
+		/*
+		 * events trigger loopexit or loopbreak, depending on whether
+		 * the event-loop should run again (loopexit), or break the
+		 * event loop completely (loopbreak).
+		 */
+		if (event_base_got_break(ev_base)) {
+			/* told to exit via signal, pipe msg, etc. */
 			break;
-		}
-		if (rc == 0) {
-			/* no fds */
-			//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "poll TIMEOUT\n");
-			if (nopin_timer > 0) {
-				nopin_timer -= POLLWAIT;
-				if (nopin_timer <= 0) {
-					nopin_timer = conn->nopininterval;
-					rc = istgt_iscsi_send_nopin(conn);
-					if (rc < 0) {
-						ISTGT_ERRLOG("iscsi_send_nopin() failed\n");
-						break;
-					}
-				}
-			}
-			continue;
-		}
-		nopin_timer = conn->nopininterval;
-#endif /* ISTGT_USE_KQUEUE */
-
-		/* on socket */
-#ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == (uintptr_t)conn->sock) {
-			if (kev.flags & (EV_EOF|EV_ERROR)) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "kevent EOF/ERROR\n");
-				break;
-			}
-#else
-		if (fds[0].revents & POLLHUP) {
-			break;
-		}
-		if (fds[0].revents & POLLIN) {
-#endif /* ISTGT_USE_KQUEUE */
-			conn->pdu.copy_pdu = 0;
-			rc = istgt_iscsi_read_pdu(conn, &conn->pdu);
-			if (rc < 0) {
-				if (conn->state != CONN_STATE_EXITING) {
-					ISTGT_ERRLOG("conn->state = %d\n", conn->state);
-				}
-				if (conn->state != CONN_STATE_RUNNING) {
-					if (errno == EINPROGRESS) {
-						sleep(1);
-						continue;
-					}
-					if (errno == ECONNRESET
-					    || errno == ETIMEDOUT) {
-						ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						    "iscsi_read_pdu() RESET/TIMEOUT\n");
-					} else {
-						ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						    "iscsi_read_pdu() EOF\n");
-					}
-					break;
-				}
-				ISTGT_ERRLOG("iscsi_read_pdu() failed\n");
-				break;
-			}
-		execute_pdu:
-			opcode = BGET8W(&conn->pdu.bhs.opcode, 5, 6);
-
-			if (conn->state != CONN_STATE_RUNNING) {
-				break;
-			}
-
-			if (g_trace_flag) {
-				if (conn->sess != NULL) {
-					SESS_MTX_LOCK(conn);
-					ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
-					    "isid=%"PRIx64", tsih=%u, cid=%u, op=%x\n",
-					    conn->sess->isid, conn->sess->tsih,
-					    conn->cid, opcode);
-					SESS_MTX_UNLOCK(conn);
-				} else {
-					ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
-					    "isid=xxx, tsih=xxx, cid=%u, op=%x\n",
-					    conn->cid, opcode);
-				}
-			}
-			rc = istgt_iscsi_execute(conn, &conn->pdu);
-			if (rc < 0) {
-				ISTGT_ERRLOG("iscsi_execute() failed on %s(%s)\n",
-				    conn->target_port, conn->initiator_port);
-				break;
-			}
-			if (g_trace_flag) {
-				if (conn->sess != NULL) {
-					SESS_MTX_LOCK(conn);
-					ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
-					    "isid=%"PRIx64", tsih=%u, cid=%u, op=%x complete\n",
-					    conn->sess->isid, conn->sess->tsih,
-					    conn->cid, opcode);
-					SESS_MTX_UNLOCK(conn);
-				} else {
-					ISTGT_TRACELOG(ISTGT_TRACE_ISCSI,
-					    "isid=xxx, tsih=xxx, cid=%u, op=%x complete\n",
-					    conn->cid, opcode);
-				}
-			}
-
-#if 0
-			if (opcode == ISCSI_OP_LOGIN) {
-				//ISTGT_NOTICELOG("OP LOGIN: %s\n", conn->initiator_port);
-				istgt_yield();
-				if (conn->full_feature) {
-					//ISTGT_NOTICELOG("full_feature %s\n", conn->initiator_port);
-				}
-			}
-#endif
-			if (opcode == ISCSI_OP_LOGOUT) {
-				ISTGT_TRACELOG(ISTGT_TRACE_ISCSI, "logout received\n");
-				break;
-			}
-
-			if (conn->pdu.copy_pdu == 0) {
-				xfree(conn->pdu.ahs);
-				conn->pdu.ahs = NULL;
-				if (conn->pdu.data != conn->pdu.shortdata) {
-					xfree(conn->pdu.data);
-				}
-				conn->pdu.data = NULL;
-			}
-
-			/* execute pending PDUs */
-			pdu = istgt_queue_dequeue(&conn->pending_pdus);
-			if (pdu != NULL) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "execute pending PDU\n");
-				rc = istgt_iscsi_copy_pdu(&conn->pdu, pdu);
-				conn->pdu.copy_pdu = 0;
-				xfree(pdu);
-				goto execute_pdu;
-			}
-
-#if 0
-			/* retry read/PDUs */
-			continue;
-#endif
-		}
-
-		/* execute on task queue */
-#ifdef ISTGT_USE_KQUEUE
-		if (kev.ident == (uintptr_t)conn->task_pipe[0]) {
-			if (kev.flags & (EV_EOF|EV_ERROR)) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "kevent EOF/ERROR\n");
-				break;
-			}
-#else
-		if (fds[1].revents & POLLHUP) {
-			break;
-		}
-		if (fds[1].revents & POLLIN) {
-#endif /* ISTGT_USE_KQUEUE */
-			char tmp[1];
-
-			//ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "Queue Task START\n");
-
-			rc = read(conn->task_pipe[0], tmp, 1);
-			if (rc < 0 || rc == 0 || rc != 1) {
-				ISTGT_ERRLOG("read() failed\n");
-				break;
-			}
-			if (tmp[0] == 'E') {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "exit request (%d)\n",
-				    conn->id);
-				break;
-			}
-
-			/* DATA-IN/OUT */
-			MTX_LOCK(&conn->task_queue_mutex);
-			rc = istgt_queue_count(&conn->task_queue);
-			lu_task = istgt_queue_dequeue(&conn->task_queue);
-			MTX_UNLOCK(&conn->task_queue_mutex);
-			if (lu_task != NULL) {
-				if (conn->exec_lu_task != NULL) {
-					ISTGT_ERRLOG("task is overlapped (CmdSN=%u, %u)\n",
-					    conn->exec_lu_task->lu_cmd.CmdSN,
-					    lu_task->lu_cmd.CmdSN);
-					break;
-				}
-				conn->exec_lu_task = lu_task;
-				if (lu_task->lu_cmd.W_bit) {
-					/* write */
-					if (lu_task->req_transfer_out == 0) {
-						if (lu_task->req_execute) {
-							if (conn->running_tasks > 0) {
-								conn->running_tasks--;
-							} else {
-								ISTGT_ERRLOG("running no task\n");
-							}
-						}
-						rc = istgt_iscsi_task_response(conn, lu_task);
-						if (rc < 0) {
-							lu_task->error = 1;
-							ISTGT_ERRLOG("iscsi_task_response() failed on %s(%s)\n",
-							    conn->target_port,
-							    conn->initiator_port);
-							break;
-						}
-						rc = istgt_lu_destroy_task(lu_task);
-						if (rc < 0) {
-							ISTGT_ERRLOG("lu_destroy_task() failed\n");
-							break;
-						}
-						lu_task = NULL;
-						conn->exec_lu_task = NULL;
-					} else {
-						//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						//    "Task Write Trans START\n");
-						rc = istgt_iscsi_task_transfer_out(conn, lu_task);
-						if (rc < 0) {
-							lu_task->error = 1;
-							ISTGT_ERRLOG("iscsi_task_transfer_out() failed on %s(%s)\n",
-							    conn->target_port,
-							    conn->initiator_port);
-							break;
-						}
-						//ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-						//    "Task Write Trans END\n");
-
-						MTX_LOCK(&lu_task->trans_mutex);
-						lu_task->req_transfer_out = 0;
-
-						/* need response after execution */
-						lu_task->req_execute = 1;
-						if (conn->use_sender == 0) {
-							conn->running_tasks++;
-						}
-
-						rc = pthread_cond_broadcast(&lu_task->trans_cond);
-						MTX_UNLOCK(&lu_task->trans_mutex);
-						if (rc != 0) {
-							ISTGT_ERRLOG("cond_broadcast() failed\n");
-							break;
-						}
-						lu_task = NULL;
-						conn->exec_lu_task = NULL;
-					}
-				} else {
-					/* read or no data */
-					rc = istgt_iscsi_task_response(conn, lu_task);
-					if (rc < 0) {
-						lu_task->error = 1;
-						ISTGT_ERRLOG("iscsi_task_response() failed on %s(%s)\n",
-						    conn->target_port,
-						    conn->initiator_port);
-						break;
-					}
-					rc = istgt_lu_destroy_task(lu_task);
-					if (rc < 0) {
-						ISTGT_ERRLOG("lu_destroy_task() failed\n");
-						break;
-					}
-					lu_task = NULL;
-					conn->exec_lu_task = NULL;
-				}
-			}
-			/* XXX PDUs in DATA-OUT? */
-			pdu = istgt_queue_dequeue(&conn->pending_pdus);
-			if (pdu != NULL) {
-				ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-				    "pending in task\n");
-				rc = istgt_iscsi_copy_pdu(&conn->pdu, pdu);
-				conn->pdu.copy_pdu = 0;
-				xfree(pdu);
-#ifdef ISTGT_USE_KQUEUE
-				kev.ident = -1;
-#else
-				fds[1].revents &= ~POLLIN;
-#endif /* ISTGT_USE_KQUEUE */
-				goto execute_pdu;
-			}
 		}
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "loop ended (%d)\n", conn->id);
 
-    cleanup_exit:
-	;
+cleanup_exit:
 	worker_cleanup(conn);
 
+	if (ev_nop != NULL) {
+		event_del(ev_nop);
+	}
+err_nop_free:
+	if (ev_nop != NULL) {
+		event_free(ev_nop);
+	}
+err_exit_check_del:
+	event_del(ev_exit_check);
+err_exit_check_free:
+	event_free(ev_exit_check);
+err_sigterm_del:
+	if (ev_sig[1] != NULL) {
+		event_del(ev_sig[1]);
+	}
+err_sigterm_free:
+	if (ev_sig[1] != NULL) {
+		event_free(ev_sig[1]);
+	}
+err_sigint_del:
+	if (ev_sig[0] != NULL) {
+		event_del(ev_sig[0]);
+	}
+err_sigint_free:
+	if (ev_sig[0] != NULL) {
+		event_free(ev_sig[0]);
+	}
+err_task_del:
+	event_del(ev_task);
+err_task_free:
+	event_free(ev_task);
+err_sock_del:
+	event_del(ev_sock);
+err_sock_free:
+	event_free(ev_sock);
+err_base_free:
+	event_base_free(ev_base);
 	return NULL;
 }
 
@@ -5959,9 +6039,7 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr 
 	conn->portal.sock = -1;
 	conn->sock = sock;
 	conn->wsock = -1;
-#ifdef ISTGT_USE_KQUEUE
-	conn->kq = -1;
-#endif /* ISTGT_USE_KQUEUE */
+	conn->ev_base = NULL;
 	conn->use_sender = 0;
 
 	conn->sess = NULL;
