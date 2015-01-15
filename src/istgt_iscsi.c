@@ -5206,7 +5206,8 @@ wait_all_task(CONN_Ptr conn)
 		return;
 	}
 
-	state.ev = event_new(state.ev_base, conn->task_pipe[0], EV_READ,
+	state.ev = event_new(state.ev_base, conn->task_pipe[0],
+			     EV_READ | EV_PERSIST,
 			     istgt_iscsi_ev_wait_task_read, &state);
 	if (state.ev == NULL) {
 		ISTGT_ERRLOG("failed to spawn iscsi task event\n");
