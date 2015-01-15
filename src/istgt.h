@@ -125,16 +125,6 @@
 #else
 #error "no signal for internal"
 #endif
-#if defined (__FreeBSD__) || defined (__NetBSD__) || defined (__OpenBSD__)
-#define ISTGT_USE_KQUEUE
-#if defined (__FreeBSD__)
-#define ISTGT_EV_SET(kevp,a,b,c,d,e,f) EV_SET((kevp),(a),(b),(c),(d),(e),(void *)(f))
-#elif defined (__NetBSD__)
-#define ISTGT_EV_SET(kevp,a,b,c,d,e,f) EV_SET((kevp),(a),(b),(c),(d),(e),(intptr_t)(f))
-#else
-#define ISTGT_EV_SET(kevp,a,b,c,d,e,f) EV_SET((kevp),(a),(b),(c),(d),(e),(f))
-#endif
-#endif
 
 #define MTX_LOCK(MTX) \
 	do {								\
