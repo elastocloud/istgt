@@ -2498,7 +2498,8 @@ reload:
 
 			ev[nidx] = event_new(ev_base,
 					istgt->portal_group[i].portals[j]->sock,
-					     EV_READ, istgt_ev_pg_read, istgt);
+					     EV_READ | EV_PERSIST,
+					     istgt_ev_pg_read, istgt);
 			if (ev[nidx] == NULL) {
 				MTX_UNLOCK(&istgt->mutex);
 				ISTGT_ERRLOG("failed to spawn event\n");
@@ -2513,7 +2514,8 @@ reload:
 	MTX_UNLOCK(&istgt->mutex);
 	for (i = 0; i < istgt->nuctl_portal; i++) {
 		ev[nidx] = event_new(ev_base, istgt->uctl_portal[i].sock,
-				     EV_READ, istgt_ev_uctl_read, istgt);
+				     EV_READ | EV_PERSIST,
+				     istgt_ev_uctl_read, istgt);
 		if (ev[nidx] == NULL) {
 			ISTGT_ERRLOG("failed to spawn event\n");
 			istgt_ev_array_free(ev, nidx);
@@ -2524,8 +2526,8 @@ reload:
 		nidx++;
 	}
 
-	ev[nidx] = event_new(ev_base, istgt->sig_pipe[0],
-			     EV_READ, istgt_ev_sig_pipe_read, istgt);
+	ev[nidx] = event_new(ev_base, istgt->sig_pipe[0], EV_READ | EV_PERSIST,
+			     istgt_ev_sig_pipe_read, istgt);
 	if (ev[nidx] == NULL) {
 		ISTGT_ERRLOG("failed to spawn event\n");
 		istgt_ev_array_free(ev, nidx);
@@ -2535,7 +2537,7 @@ reload:
 	nidx++;
 
 	if (!istgt->daemon) {
-		ev[nidx] = event_new(ev_base, SIGINT, EV_SIGNAL,
+		ev[nidx] = event_new(ev_base, SIGINT, EV_SIGNAL | EV_PERSIST,
 				     istgt_ev_sig_handle, istgt);
 		if (ev[nidx] == NULL) {
 			ISTGT_ERRLOG("failed to spawn event\n");
@@ -2545,7 +2547,7 @@ reload:
 		}
 		nidx++;
 
-		ev[nidx] = event_new(ev_base, SIGTERM, EV_SIGNAL,
+		ev[nidx] = event_new(ev_base, SIGTERM, EV_SIGNAL | EV_PERSIST,
 				     istgt_ev_sig_handle, istgt);
 		if (ev[nidx] == NULL) {
 			ISTGT_ERRLOG("failed to spawn event\n");
