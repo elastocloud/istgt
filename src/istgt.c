@@ -2425,23 +2425,6 @@ istgt_ev_sig_pipe_read(evutil_socket_t fd, short events, void *arg)
 }
 
 static void
-istgt_ev_sig_handle(evutil_socket_t signum, short events, void *arg)
-{
-	ISTGT_Ptr istgt = (ISTGT_Ptr)arg;
-
-	if ((events | EV_SIGNAL) == 0) {
-		ISTGT_ERRLOG("invalid signal callback\n");
-		return;
-	}
-
-	if ((signum == SIGINT) || (signum == SIGTERM)) {
-		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-			       "SIGINT/SIGTERM signal received\n");
-		event_base_loopbreak(istgt->ev_base);
-	}
-}
-
-static void
 istgt_ev_array_del(struct event *ev[], int nidx)
 {
 	int i;
@@ -2467,8 +2450,8 @@ static int
 istgt_acceptor(ISTGT_Ptr istgt)
 {
 	struct event_base *ev_base;
-	/* +3 for signal pipe, SIGINT and SIGTERM handlers */
-	struct event *ev[MAX_PORTAL_GROUP + MAX_UCPORTAL + 3];;
+	/* +1 for signal pipe */
+	struct event *ev[MAX_PORTAL_GROUP + MAX_UCPORTAL + 1];;
 	int rc;
 	int nidx;
 	int i, j;
@@ -2535,28 +2518,6 @@ reload:
 		return -1;
 	}
 	nidx++;
-
-	if (!istgt->daemon) {
-		ev[nidx] = event_new(ev_base, SIGINT, EV_SIGNAL | EV_PERSIST,
-				     istgt_ev_sig_handle, istgt);
-		if (ev[nidx] == NULL) {
-			ISTGT_ERRLOG("failed to spawn event\n");
-			istgt_ev_array_free(ev, nidx);
-			event_base_free(ev_base);
-			return -1;
-		}
-		nidx++;
-
-		ev[nidx] = event_new(ev_base, SIGTERM, EV_SIGNAL | EV_PERSIST,
-				     istgt_ev_sig_handle, istgt);
-		if (ev[nidx] == NULL) {
-			ISTGT_ERRLOG("failed to spawn event\n");
-			istgt_ev_array_free(ev, nidx);
-			event_base_free(ev_base);
-			return -1;
-		}
-		nidx++;
-	}
 
 	/* schedule all instantiated events for handling */
 	for (i = 0; i < nidx; i++) {
