@@ -154,12 +154,13 @@ istgt_tracelog(const int flag, const char *file, const int line, const char *fun
 
 	va_start(ap, format);
 	if (g_trace_flag & flag) {
+		pthread_t ptid = pthread_self();
 		vsnprintf(buf, sizeof buf, format, ap);
 		if (func != NULL) {
-			fprintf(stderr, "%s:%4d:%s: %s", file, line, func, buf);
+			fprintf(stderr, "%p>%s:%4d:%s: %s", ptid, file, line, func, buf);
 			//syslog(LOG_INFO, "%s:%4d:%s: %s", file, line, func, buf);
 		} else {
-			fprintf(stderr, "%s:%4d: %s", file, line, buf);
+			fprintf(stderr, "%p>%s:%4d: %s", ptid, file, line, buf);
 			//syslog(LOG_INFO, "%s:%4d: %s", file, line, buf);
 		}
 	}
