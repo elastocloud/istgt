@@ -5729,24 +5729,6 @@ conn_worker_ev_task_read(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
-
-static void
-conn_worker_ev_sig_handle(evutil_socket_t signum, short events, void *arg)
-{
-	CONN_Ptr conn = (CONN_Ptr)arg;
-
-	if ((events | EV_SIGNAL) == 0) {
-		ISTGT_ERRLOG("invalid signal callback\n");
-		return;
-	}
-
-	if ((signum == SIGINT) || (signum == SIGTERM)) {
-		ISTGT_TRACELOG(ISTGT_TRACE_DEBUG,
-			       "SIGINT/SIGTERM signal received\n");
-		event_base_loopbreak(conn->ev_base);
-	}
-}
-
 static void
 conn_worker_ev_exit_check(evutil_socket_t ignore __attribute__((__unused__)),
 			  short events __attribute__((__unused__)),
@@ -5811,7 +5793,6 @@ worker(void *arg)
 	struct event_base *ev_base;
 	struct event *ev_sock;
 	struct event *ev_task;
-	struct event *ev_sig[2] = { NULL, NULL };
 	struct timeval tout;
 	struct event *ev_exit_check;
 	struct event *ev_nop = NULL;
@@ -5851,28 +5832,6 @@ worker(void *arg)
 		goto err_task_free;
 	}
 
-	if (!conn->istgt->daemon) {
-		ev_sig[0] = event_new(ev_base, SIGINT, EV_SIGNAL | EV_PERSIST,
-				      conn_worker_ev_sig_handle, conn);
-		if (ev_sig[0] == NULL) {
-			ISTGT_ERRLOG("failed to spawn event\n");
-			goto err_task_del;
-		}
-		if (event_add(ev_sig[0], NULL) < 0) {
-			goto err_sigint_free;
-		}
-
-		ev_sig[1] = event_new(ev_base, SIGTERM, EV_SIGNAL | EV_PERSIST,
-				      conn_worker_ev_sig_handle, conn);
-		if (ev_sig[1] == NULL) {
-			ISTGT_ERRLOG("failed to spawn event\n");
-			goto err_sigint_del;
-		}
-		if (event_add(ev_sig[1], NULL) < 0) {
-			goto err_sigterm_free;
-		}
-	}
-
 	/* check for exit every 20 seconds */
 	tout.tv_sec = 20;
 	tout.tv_usec = 0;
@@ -5880,7 +5839,7 @@ worker(void *arg)
 				  conn_worker_ev_exit_check, conn);
 	if (ev_exit_check == NULL) {
 		ISTGT_ERRLOG("failed to spawn event\n");
-		goto err_sigterm_del;
+		goto err_task_del;
 	}
 	if (event_add(ev_exit_check, &tout) < 0) {
 		goto err_exit_check_free;
@@ -5973,22 +5932,6 @@ err_exit_check_del:
 	event_del(ev_exit_check);
 err_exit_check_free:
 	event_free(ev_exit_check);
-err_sigterm_del:
-	if (ev_sig[1] != NULL) {
-		event_del(ev_sig[1]);
-	}
-err_sigterm_free:
-	if (ev_sig[1] != NULL) {
-		event_free(ev_sig[1]);
-	}
-err_sigint_del:
-	if (ev_sig[0] != NULL) {
-		event_del(ev_sig[0]);
-	}
-err_sigint_free:
-	if (ev_sig[0] != NULL) {
-		event_free(ev_sig[0]);
-	}
 err_task_del:
 	event_del(ev_task);
 err_task_free:
@@ -6847,7 +6790,9 @@ istgt_iscsi_drop_old_conns(CONN_Ptr conn)
 					ISTGT_ERRLOG("write() failed\n");
 					continue;
 				}
+				printf("awaiting thread exit\n");
 				rc = pthread_join(xconn->thread, NULL);
+				printf("thread exited\n");
 				if (rc != 0) {
 					ISTGT_ERRLOG("pthread_join() failed rc=%d\n", rc);
 				}
@@ -6856,9 +6801,7 @@ istgt_iscsi_drop_old_conns(CONN_Ptr conn)
 	}
 	MTX_UNLOCK(&g_conns_mutex);
 
-	if (num != 0) {
-		printf("exiting %d conns\n", num);
-	}
+	printf("exiting %d conns\n", num);
 	return 0;
 }
 
