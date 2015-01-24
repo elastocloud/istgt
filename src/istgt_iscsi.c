@@ -6790,9 +6790,7 @@ istgt_iscsi_drop_old_conns(CONN_Ptr conn)
 					ISTGT_ERRLOG("write() failed\n");
 					continue;
 				}
-				printf("awaiting thread exit\n");
 				rc = pthread_join(xconn->thread, NULL);
-				printf("thread exited\n");
 				if (rc != 0) {
 					ISTGT_ERRLOG("pthread_join() failed rc=%d\n", rc);
 				}
@@ -6801,7 +6799,9 @@ istgt_iscsi_drop_old_conns(CONN_Ptr conn)
 	}
 	MTX_UNLOCK(&g_conns_mutex);
 
-	printf("exiting %d conns\n", num);
+	if (num != 0) {
+		printf("exiting %d conns\n", num);
+	}
 	return 0;
 }
 
