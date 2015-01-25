@@ -5709,12 +5709,6 @@ conn_worker_ev_task_read(evutil_socket_t fd, short events, void *arg)
 	}
 
 	while (1) {
-		/* process PDU - sets loopbreak on ev_base if necessary */
-		conn_worker_ev_pdu_exec(conn);
-		if (event_base_got_break(conn->ev_base)) {
-			break;
-		}
-
 		/* execute pending PDUs */
 		pdu = istgt_queue_dequeue(&conn->pending_pdus);
 		if (pdu == NULL) {
@@ -5726,6 +5720,12 @@ conn_worker_ev_task_read(evutil_socket_t fd, short events, void *arg)
 		rc = istgt_iscsi_copy_pdu(&conn->pdu, pdu);
 		conn->pdu.copy_pdu = 0;
 		xfree(pdu);
+
+		/* process PDU - sets loopbreak on ev_base if necessary */
+		conn_worker_ev_pdu_exec(conn);
+		if (event_base_got_break(conn->ev_base)) {
+			break;
+		}
 	}
 }
 
