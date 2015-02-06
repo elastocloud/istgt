@@ -35,7 +35,21 @@
 #include "config.h"
 #endif
 
+#ifdef __APPLE__
+#include <machine/endian.h>
+#if !defined(BYTE_ORDER) || !defined(BIG_ENDIAN)
+#error BYTE_ORDER (OS X) macros not defined
+#endif
+#ifndef __BYTE_ORDER
+#define __BYTE_ORDER BYTE_ORDER
+#endif
+#ifndef __BIG_ENDIAN
+#define __BIG_ENDIAN BIG_ENDIAN
+#endif
+#else
 #include <endian.h>
+#endif
+
 #include "md5.h"
 #include "hash.h"
 
