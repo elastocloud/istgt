@@ -5311,7 +5311,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_elasto_file_elasto_fopen" >&5
 $as_echo "$ac_cv_lib_elasto_file_elasto_fopen" >&6; }
 if test "x$ac_cv_lib_elasto_file_elasto_fopen" = xyes; then :
-  ELASTO="-lelasto_file"
+  ELASTO="-lelasto_file -lelasto_core"
 
 
 $as_echo "#define HAVE_ELASTO 1" >>confdefs.h

@@ -417,7 +417,7 @@ AC_ARG_WITH([elasto],
 ELASTO=
 AS_IF([test "x$with_elasto" != xno],
       [AC_CHECK_LIB([elasto_file], [elasto_fopen],
-		    [AC_SUBST([ELASTO], ["-lelasto_file"])
+		    [AC_SUBST([ELASTO], ["-lelasto_file -lelasto_core"])
 		     AC_DEFINE([HAVE_ELASTO], [1],
 			       [Define if you have Elasto])
 		    ],

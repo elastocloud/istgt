@@ -110,7 +110,7 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 		goto err_out;
 	}
 
-	auth.type = ELASTO_FILE_AZURE;
+	auth.type = ELASTO_FILE_APB;	/* Azure page blobs only for now */
 	auth.az.ps_path = xstrdup(spec->ps_file);
 	auth.insecure_http
 		= (spec->eflags & ISTGT_LU_ELASTO_FLAG_HTTP) ? true : false;
@@ -118,6 +118,7 @@ istgt_lu_disk_open_elasto(ISTGT_LU_DISK *spec,
 	ret = elasto_fopen(&auth,
 			   spec->file,
 			   elasto_flags,
+			   NULL,
 			   &exspec->efh);
 	xfree(auth.az.ps_path);
 	if (ret < 0) {
@@ -189,7 +190,7 @@ istgt_lu_disk_read_elasto(ISTGT_LU_DISK *spec, void *buf, uint64_t nbytes)
 	struct elasto_data *data;
 	int ret;
 
-	ret = elasto_data_iov_new((uint8_t *)buf, nbytes, 0, false, &data);
+	ret = elasto_data_iov_new((uint8_t *)buf, nbytes, false, &data);
 	if (ret < 0) {
 		ISTGT_ERRLOG("read data init error\n");
 		return -1;
@@ -216,7 +217,7 @@ istgt_lu_disk_write_elasto(ISTGT_LU_DISK *spec, const void *buf, uint64_t nbytes
 	struct elasto_data *data;
 	int ret;
 
-	ret = elasto_data_iov_new((uint8_t *)buf, nbytes, 0, false, &data);
+	ret = elasto_data_iov_new((uint8_t *)buf, nbytes, false, &data);
 	if (ret < 0) {
 		ISTGT_ERRLOG("write data init error\n");
 		return -1;
