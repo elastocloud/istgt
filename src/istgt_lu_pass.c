@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2015 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -179,8 +179,8 @@ istgt_lu_pass_set_inquiry(ISTGT_LU_PASS *spec)
 	memset(buf, 0, sizeof buf);
 	memset(cdb, 0, sizeof cdb);
 	data = buf;
-	if (sizeof buf > 0xff) {
-		data_alloc_len = 0xff;
+	if (sizeof buf > 0xfc) {
+		data_alloc_len = 0xfc;
 	} else {
 		data_alloc_len = sizeof buf;
 	}
@@ -246,8 +246,8 @@ istgt_lu_pass_set_modesense(ISTGT_LU_PASS *spec)
 	memset(buf, 0, sizeof buf);
 	memset(cdb, 0, sizeof cdb);
 	data = buf;
-	if (sizeof buf > 0xff) {
-		data_alloc_len = 0xff;
+	if (sizeof buf > 0xfc) {
+		data_alloc_len = 0xfc;
 	} else {
 		data_alloc_len = sizeof buf;
 	}
@@ -484,8 +484,8 @@ istgt_lu_pass_set_capacity(ISTGT_LU_PASS *spec)
 	memset(buf, 0, sizeof buf);
 	memset(cdb, 0, sizeof cdb);
 	data = buf;
-	if (sizeof buf > 0xff) {
-		data_alloc_len = 0xff;
+	if (sizeof buf > 0xfc) {
+		data_alloc_len = 0xfc;
 	} else {
 		data_alloc_len = sizeof buf;
 	}
@@ -1202,6 +1202,10 @@ istgt_lu_pass_do_cam(ISTGT_LU_PASS *spec, CONN_Ptr conn __attribute__((__unused_
 			istgt_lu_pass_parse_sense_key(sense_data + 2,
 			    &sk, &asc, &ascq);
 		}
+		if (lu_cmd->status == 0) {
+			/* XXX don't return with zero */
+			lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+		}
 		return -1;
 	}
 	ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "dxfer=%d, resid=%d, sense=%d\n",
@@ -1458,6 +1462,10 @@ istgt_lu_pass_do_cam_seg(ISTGT_LU_PASS *spec, CONN_Ptr conn __attribute__((__unu
 				istgt_lu_pass_print_sense_key(sense_data + 2);
 				istgt_lu_pass_parse_sense_key(sense_data + 2,
 				    &sk, &asc, &ascq);
+			}
+			if (lu_cmd->status == 0) {
+				/* XXX don't return with zero */
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 			}
 			return -1;
 		}

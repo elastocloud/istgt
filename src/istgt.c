@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2015 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1552,6 +1552,13 @@ istgt_init(ISTGT_Ptr istgt)
 		    istgt->discovery_auth_group);
 	}
 
+	/* global mutex */
+	rc = pthread_mutex_init(&istgt->mutex, NULL);
+	if (rc != 0) {
+		ISTGT_ERRLOG("mutex_init() failed\n");
+		return -1;
+	}
+
 	rc = istgt_uctl_init(istgt);
 	if (rc < 0) {
 		ISTGT_ERRLOG("istgt_uctl_init() failed\n");
@@ -1606,11 +1613,6 @@ istgt_init(ISTGT_Ptr istgt)
 #endif
 	if (rc != 0) {
 		ISTGT_ERRLOG("mutexattr_settype() failed\n");
-		return -1;
-	}
-	rc = pthread_mutex_init(&istgt->mutex, NULL);
-	if (rc != 0) {
-		ISTGT_ERRLOG("mutex_init() failed\n");
 		return -1;
 	}
 	rc = pthread_mutex_init(&istgt->state_mutex, &istgt->mutex_attr);

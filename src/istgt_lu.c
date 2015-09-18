@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2015 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1670,7 +1670,9 @@ istgt_lu_add_unit(ISTGT_Ptr istgt, CF_SECTION *sp)
 			break;
 		}
 	} else {
-		lu->queue_depth = (int) strtol(val, NULL, 10);
+		lu->queue_depth = 0;
+		if (lu->type == ISTGT_LU_TYPE_DISK)
+			lu->queue_depth = (int) strtol(val, NULL, 10);
 	}
 	if (lu->queue_depth < 0 || lu->queue_depth >= MAX_LU_QUEUE_DEPTH) {
 		ISTGT_ERRLOG("LU%d: queue depth range error\n", lu->num);
