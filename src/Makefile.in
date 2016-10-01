@@ -17,7 +17,7 @@ mandir   = @mandir@
 
 CC       = @CC@
 CFLAGS   = @CFLAGS@ @ELASTO@
-CPPFLAGS = @CPPFLAGS@ -I$(top_srcdir) -I$(srcdir)
+CPPFLAGS = @CPPFLAGS@ -I$(top_srcdir) -I$(srcdir) -I. -I./src
 LDFLAGS  = @LDFLAGS@
 DEFS     = @DEFS@
 LIBS     = @LIBS@ @ELASTO@
@@ -70,13 +70,14 @@ DISTEXTVER = `sed -e '/ISTGT_EXTRA_VERSION/!d' -e 's/[^0-9.]*\([0-9.a-z]*\).*/\1
 DISTDIR = $(top_srcdir)/`cat $(top_srcdir)/distdir`
 DISTNAME = $(DISTDIR).tar.gz
 DISTFILES = Makefile.in config.h.in build.h.in \
-	$(header) $(source) $(ctl_header) $(ctl_source) \
+	$(header) $(addprefix $(srcdir)/,$(source)) \
+	$(ctl_header) $(addprefix $(srcdir)/,$(ctl_source)) \
 	$(document) $(sample)
 
 #########################################################################
 
 .SUFFIXES: .c .o
-.c.o:
+%.o:	$(srcdir)/%.c
 	$(CC) $(DEFS) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
 .PHONY: all install install-dirs
@@ -107,7 +108,7 @@ dist: $(DISTFILES)
 
 depend:
 	if [ "x$(MKDEP)" != "x" ]; then \
-		$(MKDEP) -MM $(DEFS) $(CFLAGS) $(CPPFLAGS) $(source); \
+		$(MKDEP) -MM $(DEFS) $(CFLAGS) $(CPPFLAGS) $(addprefix $(srcdir)/,$(source)); \
 	fi
 	touch stamp-depend
 

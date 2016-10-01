@@ -24,12 +24,12 @@ source   =
 header   = 
 document = QUICKSTART QUICKSTART.jp
 sample   = 
-MANPAGES = $(patsubst %.1.in, %.1, $(wildcard *.1.in))
+MANPAGES = $(patsubst $(srcdir)/%.1.in, %.1, $(wildcard $(srcdir)/*.1.in))
 
 DISTDIR = $(top_srcdir)/`cat $(top_srcdir)/distdir`
 DISTFILES = Makefile.in \
 	$(header) $(source) \
-	$(document) $(sample)
+	$(srcdir)/$(document) $(sample)
 DISTFILES += $(MANPAGES)
 
 #########################################################################
@@ -40,7 +40,7 @@ all: $(MANPAGES)
 $(MANPAGES):
 	$(SED) -e 's:%%PREFIX%%:$(prefix):g' \
 		-e 's:%%CONFIGDIR%%:$(configdir):g' \
-		-e 's:%%MEDIADIR%%:$(mediadir):g' < $(patsubst %.1, %.1.in, $@) > $@
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < $(patsubst %.1, $(srcdir)/%.1.in, $@) > $@
 
 dist: $(DISTFILES)
 	$(MKDIR_P) $(DISTDIR)/$(subdir)

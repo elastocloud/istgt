@@ -44,17 +44,17 @@ all: istgt.large.conf istgt.conf $(rcfile)
 istgt.large.conf:
 	$(SED) -e 's:%%SYSCONFDIR%%:$(sysconfdir):g' \
 		-e 's:%%CONFIGDIR%%:$(configdir):g' \
-		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.large.conf.in > $@
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < $(srcdir)/istgt.large.conf.in > $@
 istgt.conf:
 	$(SED) -e 's:%%SYSCONFDIR%%:$(sysconfdir):g' \
 		-e 's:%%CONFIGDIR%%:$(configdir):g' \
-		-e 's:%%MEDIADIR%%:$(mediadir):g' < istgt.conf.in > $@
+		-e 's:%%MEDIADIR%%:$(mediadir):g' < $(srcdir)/istgt.conf.in > $@
 $(rcfile):
 	$(SED) -e 's:%%SYSCONFDIR%%:$(sysconfdir):g' \
 		-e 's:%%CONFIGDIR%%:$(configdir):g' \
 		-e 's:%%MEDIADIR%%:$(mediadir):g' \
 		-e 's:%%BINDIR%%:$(bindir):g' \
-		-e 's:%%SBINDIR%%:$(sbindir):g' < $(rctemplate) > $@
+		-e 's:%%SBINDIR%%:$(sbindir):g' < $(srcdir)/$(rctemplate) > $@
 
 .PHONY: dist clean distclean depend
 dist: $(DISTFILES)
@@ -68,8 +68,8 @@ install: install-dirs
 	$(INSTALL) -m 0644 istgt.conf $(DESTDIR)$(sysconfdir)/istgt/istgt.conf.sample
 	$(INSTALL) -m 0644 istgt.large.conf \
 		$(DESTDIR)$(sysconfdir)/istgt/istgt.large.conf.sample
-	$(INSTALL) -m 0600 auth.conf $(DESTDIR)$(sysconfdir)/istgt/auth.conf.sample
-	$(INSTALL) -m 0600 istgtcontrol.conf \
+	$(INSTALL) -m 0600 $(srcdir)/auth.conf $(DESTDIR)$(sysconfdir)/istgt/auth.conf.sample
+	$(INSTALL) -m 0600 $(srcdir)/istgtcontrol.conf \
 		$(DESTDIR)$(sysconfdir)/istgt/istgtcontrol.conf.sample
 	if [ "x$(rcfile)" != "x" -a -f "$(rcfile)" ]; then \
 	    if  [ "x$(rcfile)" == "xistgt.service" ]; then \
