@@ -57,6 +57,9 @@
 /* Define to 1 if you have the `cam' library (-lcam). */
 #undef HAVE_LIBCAM
 
+/* Define to 1 if you have the `event' library (-levent). */
+#undef HAVE_LIBEVENT
+
 /* Define to 1 if you have the `pthread' library (-lpthread). */
 #undef HAVE_LIBPTHREAD
 
