@@ -55,7 +55,6 @@
 #endif
 
 #ifdef HAVE_ELASTO
-#include "elasto/data.h"
 #include "elasto/file.h"
 
 struct istgt_lu_disk_elasto {
@@ -187,61 +186,45 @@ istgt_lu_disk_read_elasto(ISTGT_LU_DISK *spec, void *buf, uint64_t nbytes)
 {
 	struct istgt_lu_disk_elasto *exspec
 				= (struct istgt_lu_disk_elasto *)spec->exspec;
-	struct elasto_data *data;
 	int ret;
 
-	ret = elasto_data_iov_new((uint8_t *)buf, nbytes, false, &data);
-	if (ret < 0) {
-		ISTGT_ERRLOG("read data init error\n");
-		return -1;
-	}
-
-	ret = elasto_fread(exspec->efh, spec->foffset, nbytes, data);
+	ret = elasto_fread(exspec->efh, spec->foffset, nbytes, buf);
 	if (ret < 0) {
 		ISTGT_ERRLOG("elasto_fread error\n");
 		return -1;
 	}
 
-	data->iov.buf = NULL;
-	elasto_data_free(data);
-
 	spec->foffset += nbytes;
 	return (int64_t)nbytes;
 }
+
+#ifndef discard_const
+#define discard_const(ptr) ((void *)((intptr_t)(ptr)))
+#endif
 
 static int64_t
 istgt_lu_disk_write_elasto(ISTGT_LU_DISK *spec, const void *buf, uint64_t nbytes)
 {
 	struct istgt_lu_disk_elasto *exspec
 				= (struct istgt_lu_disk_elasto *)spec->exspec;
-	struct elasto_data *data;
 	int ret;
 
-	ret = elasto_data_iov_new((uint8_t *)buf, nbytes, false, &data);
-	if (ret < 0) {
-		ISTGT_ERRLOG("write data init error\n");
-		return -1;
-	}
-
-	ret = elasto_fwrite(exspec->efh, spec->foffset, nbytes, data);
+	ret = elasto_fwrite(exspec->efh, spec->foffset, nbytes,
+			    discard_const(buf));
 	if (ret < 0) {
 		ISTGT_ERRLOG("elasto_fwrite error\n");
 		return -1;
 	}
-
-	data->iov.buf = NULL;
-	elasto_data_free(data);
 
 	spec->foffset += nbytes;
 	return (int64_t)nbytes;
 }
 
 static int64_t
-istgt_lu_disk_sync_elasto(ISTGT_LU_DISK *spec, uint64_t offset __attribute__((__unused__)), uint64_t nbytes __attribute__((__unused__)))
+istgt_lu_disk_sync_elasto(ISTGT_LU_DISK *spec __attribute__((__unused__)),
+			  uint64_t offset __attribute__((__unused__)),
+			  uint64_t nbytes __attribute__((__unused__)))
 {
-	struct istgt_lu_disk_elasto *exspec
-				= (struct istgt_lu_disk_elasto *)spec->exspec;
-
 	/* IO is done synchronously, so nothing to do here */
 
 	return 0;
@@ -265,17 +248,8 @@ istgt_lu_disk_allocate_elasto(ISTGT_LU_DISK *spec)
 }
 
 static int
-istgt_lu_disk_setcache_elasto(ISTGT_LU_DISK *spec)
+istgt_lu_disk_setcache_elasto(ISTGT_LU_DISK *spec __attribute__((__unused__)))
 {
-	struct istgt_lu_disk_elasto *exspec
-				= (struct istgt_lu_disk_elasto *)spec->exspec;
-
-	/* not implemented */
-
-	if (spec->read_cache) {
-	}
-	if (spec->write_cache) {
-	}
 	return 0;
 }
 
