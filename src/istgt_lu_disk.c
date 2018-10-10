@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2018 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -4947,6 +4947,9 @@ istgt_lu_disk_queue(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	sense_data = lu_cmd->sense_data;
 	sense_len = &lu_cmd->sense_data_len;
 	*sense_len = 0;
+	if (lu_cmd->sense_alloc_len > 0) {
+		memset(sense_data, 0, lu_cmd->sense_alloc_len);
+	}
 
 	lun_i = istgt_lu_islun2lun(lu_cmd->lun);
 	if (lun_i >= lu->maxlun) {
@@ -5526,6 +5529,9 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	sense_data = lu_cmd->sense_data;
 	sense_len = &lu_cmd->sense_data_len;
 	*sense_len = 0;
+	if (lu_cmd->sense_alloc_len > 0) {
+		memset(sense_data, 0, lu_cmd->sense_alloc_len);
+	}
 
 	lun_i = istgt_lu_islun2lun(lu_cmd->lun);
 	if (lun_i >= lu->maxlun) {
@@ -5658,6 +5664,13 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			sel = cdb[2];
 			ISTGT_TRACELOG(ISTGT_TRACE_DEBUG, "sel=%x\n", sel);
 
+			if (sel > 0x02) {
+				/* LOGICAL UNIT NOT SUPPORTED */
+				BUILD_SENSE(ILLEGAL_REQUEST, 0x25, 0x00);
+				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
+				break;
+			}
+
 			allocation_len = DGET32(&cdb[6]);
 			if (allocation_len > (size_t) data_alloc_len) {
 				ISTGT_ERRLOG("data_alloc_len(%d) too small\n",
@@ -5675,6 +5688,7 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 			data_len = istgt_lu_disk_scsi_report_luns(lu, conn, cdb, sel,
 			    data, data_alloc_len);
 			if (data_len < 0) {
+ISTGT_TRACELOG(ISTGT_TRACE_SCSI, "XXX data_len %d\n", data_len);
 				lu_cmd->status = ISTGT_SCSI_STATUS_CHECK_CONDITION;
 				break;
 			}
@@ -6969,5 +6983,11 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	    "SCSI OP=0x%x, LUN=0x%16.16"PRIx64" status=0x%x,"
 	    " complete\n",
 	    cdb[0], lu_cmd->lun, lu_cmd->status);
+	if (lu_cmd->status != ISTGT_SCSI_STATUS_GOOD
+	    && lu_cmd->sense_alloc_len > 0) {
+		ISTGT_TRACEDUMP(ISTGT_TRACE_SCSI, "SENSE DATA",
+		    lu_cmd->sense_data,
+		    lu_cmd->sense_alloc_len > 18 ? 18 : lu_cmd->sense_alloc_len);
+	}
 	return 0;
 }

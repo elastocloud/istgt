@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2015 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2018 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1570,6 +1570,9 @@ istgt_lu_pass_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
 	sense_data = lu_cmd->sense_data;
 	sense_len = &lu_cmd->sense_data_len;
 	*sense_len = 0;
+	if (lu_cmd->sense_alloc_len > 0) {
+		memset(sense_data, 0, lu_cmd->sense_alloc_len);
+	}
 
 	fmt_lun = lu_cmd->lun;
 	method = (fmt_lun >> 62) & 0x03U;

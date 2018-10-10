@@ -125,7 +125,7 @@
 #define DMAX64(A,B) ((uint64_t) ((A) > (B) ? (A) : (B)))
 
 #define BSHIFTNW(N,W) (((W) > 0) ? (((N) > ((W)-1)) ? ((N) - ((W)-1)) : 0) : 0)
-#define BMASKW(W) (((W) > 0) ? (~((~0) << (W))) : 0)
+#define BMASKW(W) (((W) > 0) ? (~((~0U) << (W))) : 0)
 
 #define BDSET8W(B,D,N,W) DSET8((B),(((D)&BMASKW((W)))<<BSHIFTNW((N),(W))))
 #define BDADD8W(B,D,N,W) DSET8((B),((DGET8((B)) & ~(BMASKW((W)) << BSHIFTNW((N),(W)))) | (uint8_t) (((D) & BMASKW((W))) << BSHIFTNW((N),(W)))))

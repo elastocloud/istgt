@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2015 Daisuke Aoyama <aoyama@peach.ne.jp>.
+ * Copyright (C) 2008-2018 Daisuke Aoyama <aoyama@peach.ne.jp>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,6 +29,6 @@
 #define ISTGT_VER_H
 
 #define ISTGT_VERSION "0.5"
-#define ISTGT_EXTRA_VERSION "20150713"
+#define ISTGT_EXTRA_VERSION "20180521"
 
 #endif /* ISTGT_VER_H */
